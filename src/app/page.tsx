@@ -3,8 +3,38 @@ import { useState, useEffect, useMemo } from "react";
 import { stations } from "@/data/stations";
 import { Journey, Preference } from "@/lib/types";
 import { findJourneys, formatDuration, getRecoveryOptions } from "@/lib/engine";
+import {
+  TrainFront,
+  ArrowLeftRight,
+  Clock3,
+  IndianRupee,
+  ShieldCheck,
+  ShieldAlert,
+  OctagonAlert,
+  Info,
+  MapPin,
+  Navigation,
+  Bus,
+  CarFront,
+  ChevronDown,
+  ArrowRight,
+  Sparkles,
+  Bookmark,
+  Copy,
+  Check,
+  Search,
+  Zap,
+  Leaf,
+  Wallet,
+  Users,
+  Flag,
+  Timer,
+  Route,
+  ArrowUpDown,
+  ChevronRight,
+  X,
+} from "lucide-react";
 
-// --- helpers ---
 function todayISO() {
   const d = new Date();
   d.setDate(d.getDate() + 2);
@@ -13,11 +43,30 @@ function todayISO() {
 function formatDate(d: string) {
   try {
     const dt = new Date(d + "T00:00:00");
-    return dt.toLocaleDateString("en-IN", { day: "numeric", month: "long" });
+    return dt.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
   } catch {
     return d;
   }
 }
+function formatDateShort(d: string) {
+  try {
+    const dt = new Date(d + "T00:00:00");
+    return dt.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  } catch {
+    return d;
+  }
+}
+
+const RISK_COLOR: Record<string, string> = {
+  low: "#0E9F4B",
+  medium: "#D98200",
+  high: "#C62828",
+};
+const RISK_LABEL: Record<string, string> = {
+  low: "Low risk",
+  medium: "Moderate",
+  high: "High risk",
+};
 
 export default function Home() {
   const [from, setFrom] = useState("New Delhi");
@@ -39,7 +88,6 @@ export default function Home() {
   const [fromOpen, setFromOpen] = useState(false);
   const [toOpen, setToOpen] = useState(false);
 
-  // load saved
   useEffect(() => {
     try {
       const raw = localStorage.getItem("raasta_saved");
@@ -50,10 +98,6 @@ export default function Home() {
     localStorage.setItem("raasta_saved", JSON.stringify(saved));
   }, [saved]);
 
-  const fromStations = useMemo(() => stations.filter(s => s.city !== "Goa"), []);
-  const toStations = useMemo(() => stations.filter(s => s.city === "Goa" || ["MAO","VSG","PUNE","MMCT","ERS","SBC","MAS","HYB"].includes(s.id)), []);
-
-  // search action
   const doSearch = () => {
     if (!from || !to) {
       setToast("Please enter both stations");
@@ -69,30 +113,29 @@ export default function Home() {
       setTimeout(() => setToast(null), 3000);
       return;
     }
-    // reorder for display: keep 3, but label correctly
-    // Our engine already sorts by pref, but for UI we show Recommended = easy best, Fastest = quickest, Cheapest = cheapest
-    // So generate all three variants and pick
     const easy = findJourneys(from, to, date, "easy")[0];
     const fast = findJourneys(from, to, date, "fastest")[0];
     const cheap = findJourneys(from, to, date, "cheapest")[0];
-    // de-dupe by id
     const map = new Map<string, Journey>();
-    [easy, fast, cheap].forEach(j => { if (j) map.set(j.id, j); });
+    [easy, fast, cheap].forEach((j) => {
+      if (j) map.set(j.id, j);
+    });
     let list = Array.from(map.values());
-    // if same journey appears multiple times, expand with generic fallback (use same but tweak)
     if (list.length < 3) {
       const fallback = findJourneys(from, to, date, "easy");
-      fallback.forEach(j => { if (!map.has(j.id)) map.set(j.id, j); });
+      fallback.forEach((j) => {
+        if (!map.has(j.id)) map.set(j.id, j);
+      });
       list = Array.from(map.values());
     }
-    // Ensure order: recommended first (easy), fastest second, cheapest third
     const ordered: Journey[] = [];
     if (easy) ordered.push(easy);
     if (fast && fast.id !== easy?.id) ordered.push(fast);
     if (cheap && cheap.id !== easy?.id && cheap.id !== fast?.id) ordered.push(cheap);
-    // if still <3, pad with remaining
-    list.forEach(j => { if (!ordered.find(o=>o.id===j.id)) ordered.push(j); });
-    setJourneys(ordered.slice(0,3));
+    list.forEach((j) => {
+      if (!ordered.find((o) => o.id === j.id)) ordered.push(j);
+    });
+    setJourneys(ordered.slice(0, 3));
     setView("results");
     setDelay(0);
     setRecoverSelected(null);
@@ -102,7 +145,6 @@ export default function Home() {
   const handleExplain = async (j: Journey) => {
     setExplainLoading(true);
     setExplain(null);
-    // Try API if available, else deterministic fallback
     try {
       const res = await fetch("/api/explain", {
         method: "POST",
@@ -118,127 +160,201 @@ export default function Home() {
         }
       }
     } catch {}
-    // Fallback deterministic
-    await new Promise(r => setTimeout(r, 600));
-    const legs = j.legs.filter(l => l.type === "train") as any[];
-    const transfer = (j.legs.find(l => l.type==="transfer") as any)?.transfer;
-    const txt = `You'll take ${legs.length} train${legs.length>1?'s':''} and change ${j.interchangeCount===0?'nowhere':'once at '+transfer?.fromStationId }.\n\nYour first train (${legs[0]?.train.name} ${legs[0]?.train.number}) leaves ${legs[0]?.from.name} at ${legs[0]?.departure} and arrives at ${transfer ? getStationName(transfer.fromStationId) : legs[0]?.to.name} at ${legs[0]?.arrival}.\n\n${transfer ? `You have ${formatDuration(transfer.durationMinutes)} to change trains${transfer.requiresStationChange ? ' — you\'ll need to travel to another station' : " — both trains use the same station, so you won't need to leave the station"}.\n\nWe consider this a ${transfer.risk}-risk connection: ${transfer.reason}\n\n` : ""}Your final train arrives in ${j.destination.city} at approximately ${legs[legs.length-1]?.arrival}.\nTotal journey time is about ${formatDuration(j.totalDurationMinutes)}. Estimated cost ₹${j.totalCost.toLocaleString("en-IN")} (AC 3-tier).`;
+    await new Promise((r) => setTimeout(r, 600));
+    const legs = j.legs.filter((l) => l.type === "train") as any[];
+    const transfer = (j.legs.find((l) => l.type === "transfer") as any)?.transfer;
+    const txt = `You'll take ${legs.length} train${legs.length > 1 ? "s" : ""} and change ${j.interchangeCount === 0 ? "nowhere" : "once at " + getStationName(transfer?.fromStationId)}.\n\nYour first train (${legs[0]?.train.name} ${legs[0]?.train.number}) leaves ${legs[0]?.from.name} at ${legs[0]?.departure} and arrives at ${transfer ? getStationName(transfer.fromStationId) : legs[0]?.to.name} at ${legs[0]?.arrival}.\n\n${transfer ? `You have ${formatDuration(transfer.durationMinutes)} to change trains${transfer.requiresStationChange ? " — you'll need to travel to another station" : " — both trains use the same station, so you won't need to leave the station"}.\n\nWe consider this a ${transfer.risk}-risk connection: ${transfer.reason}\n\n` : ""}Your final train arrives in ${j.destination.city} at approximately ${legs[legs.length - 1]?.arrival}.\nTotal journey time is about ${formatDuration(j.totalDurationMinutes)}. Estimated cost ₹${j.totalCost.toLocaleString("en-IN")} (AC 3-tier).`;
     setExplain(txt);
     setExplainLoading(false);
   };
 
   const saveJourney = (j: Journey) => {
-    if (saved.find(s => s.id === j.id)) {
+    if (saved.find((s) => s.id === j.id)) {
       setToast("Already saved");
     } else {
-      setSaved(prev => [...prev, j]);
+      setSaved((prev) => [...prev, j]);
       setToast("Journey saved");
     }
-    setTimeout(()=>setToast(null),2000);
+    setTimeout(() => setToast(null), 2000);
   };
 
   const recovery = selected ? getRecoveryOptions(selected, delay) : [];
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="sticky top-0 z-40 bg-[#FFFBF5]/90 backdrop-blur border-b border-[#F0E6D8]">
-        <div className="max-w-[1120px] mx-auto px-4 sm:px-6 h-[56px] flex items-center justify-between">
-          <button onClick={() => { setView("landing"); setSelected(null); setShowHow(false); }} className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-[#1A1A1A] text-white grid place-items-center font-bold text-sm">R</div>
-            <span className="font-semibold tracking-tight text-[17px]">Raasta</span>
-            <span className="hidden sm:inline text-xs px-2 py-1 rounded-full bg-[#FFF4E6] border border-[#F0E6D8] text-[#8A5A1A] ml-1">Prototype</span>
+    <div className="min-h-screen flex flex-col bg-paper">
+      {/* Header - enamel board style */}
+      <header className="sticky top-0 z-40 bg-[#1B3A5C] border-b-[3px] border-[#F2B705]">
+        <div className="max-w-[1120px] mx-auto px-4 sm:px-6 h-[52px] flex items-center justify-between">
+          <button
+            onClick={() => {
+              setView("landing");
+              setSelected(null);
+              setShowHow(false);
+            }}
+            className="flex items-center gap-3"
+          >
+            <div className="h-[28px] px-2 bg-[#F2B705] border border-[#0F2340] grid place-items-center font-display text-[15px] tracking-[0.04em] text-[#1B3A5C] leading-none">
+              RAASTA
+            </div>
+            <span className="hidden sm:inline font-display text-[16px] tracking-[0.08em] text-[#FAF7F0]">RAASTA</span>
+            <span className="hidden sm:inline text-[10px] tracking-[0.12em] font-mono px-2 py-1 bg-[#FAF7F0] text-[#1B3A5C] border border-[#0F2340]">PROTOTYPE — SYNTHETIC DATA</span>
           </button>
-          <nav className="flex items-center gap-1 sm:gap-5 text-sm">
-            <button onClick={() => { setView("landing"); window.scrollTo({top:0, behavior:"smooth"})}} className="hidden sm:inline hover:underline underline-offset-4">Plan journey</button>
-            <button onClick={()=>setShowSaved(true)} className="relative px-3 py-1.5 rounded-full border border-[#E5DDD3] bg-white hover:bg-[#FFF4E6] transition text-sm font-medium">
-              Saved journeys {saved.length>0 && <span className="ml-1 bg-[#1A1A1A] text-white text-[11px] px-1.5 py-0.5 rounded-full">{saved.length}</span>}
+          <nav className="flex items-center gap-2 sm:gap-3 text-sm">
+            <button
+              onClick={() => {
+                setView("landing");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              className="hidden sm:inline-flex items-center gap-1.5 text-[#FAF7F0]/80 hover:text-white font-medium text-[13px] px-2 py-1"
+            >
+              <Route className="w-4 h-4" /> Plan journey
             </button>
-            <button onClick={()=>setShowHow(v=>!v)} className="hidden sm:inline text-sm text-[#6B7280] hover:text-black">How it works</button>
+            <button
+              onClick={() => setShowSaved(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF7F0] text-[#1B3A5C] border border-[#0F2340] text-[13px] font-medium hover:bg-white transition"
+            >
+              <Bookmark className="w-3.5 h-3.5" />
+              SAVED
+              {saved.length > 0 && (
+                <span className="ml-1 bg-[#1B3A5C] text-white text-[11px] font-mono px-1.5 py-0.5 leading-none">{saved.length}</span>
+              )}
+            </button>
+            <button onClick={() => setShowHow((v) => !v)} className="hidden md:inline text-[13px] text-[#FAF7F0]/70 hover:text-white px-2">
+              How it works
+            </button>
           </nav>
         </div>
         {showHow && (
-          <div className="border-t border-[#F0E6D8] bg-white">
-            <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-5 grid sm:grid-cols-3 gap-4 text-sm">
-              <div className="bg-[#FFFBF5] rounded-xl p-4 border border-[#F0E6D8]">
-                <div className="font-semibold mb-1">1. Tell us where you're going</div>
-                <p className="text-[#6B7280]">We build complete journeys, not just trains.</p>
+          <div className="bg-[#FAF7F0] border-t border-[#E8E0D1]">
+            <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-4 grid sm:grid-cols-3 gap-3 text-[13px]">
+              <div className="bg-white border border-[#E8E0D1] p-3 flex gap-3">
+                <Search className="w-4 h-4 text-[#1B3A5C] mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-display text-[13px] tracking-wide">01 — Tell us where</div>
+                  <p className="text-[#5C6B80] leading-4 mt-1">We build complete journeys, not just trains.</p>
+                </div>
               </div>
-              <div className="bg-[#FFFBF5] rounded-xl p-4 border border-[#F0E6D8]">
-                <div className="font-semibold mb-1">2. We validate connections</div>
-                <p className="text-[#6B7280]">We check transfer time, station changes and delay risk.</p>
+              <div className="bg-white border border-[#E8E0D1] p-3 flex gap-3">
+                <ShieldCheck className="w-4 h-4 text-[#1B3A5C] mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-display text-[13px] tracking-wide">02 — We validate</div>
+                  <p className="text-[#5C6B80] leading-4 mt-1">Transfer time, station changes and delay risk.</p>
+                </div>
               </div>
-              <div className="bg-[#FFFBF5] rounded-xl p-4 border border-[#F0E6D8]">
-                <div className="font-semibold mb-1">3. We guide you through</div>
-                <p className="text-[#6B7280]">Next steps, interchange instructions and recovery if delayed.</p>
+              <div className="bg-white border border-[#E8E0D1] p-3 flex gap-3">
+                <Navigation className="w-4 h-4 text-[#1B3A5C] mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-display text-[13px] tracking-wide">03 — We guide you</div>
+                  <p className="text-[#5C6B80] leading-4 mt-1">Next steps, interchange and recovery if delayed.</p>
+                </div>
               </div>
             </div>
           </div>
         )}
       </header>
 
-      {/* disclosure bar */}
-      <div className="bg-[#1A1A1A] text-[#FFEEC7] text-[12px] text-center py-1.5 px-3">
-        Independent prototype · Uses synthetic railway data — not live IRCTC availability · Not an official government product
+      {/* disclosure - ticket strip */}
+      <div className="bg-[#FAF7F0] border-b border-[#E8E0D1] text-[11px] font-mono tracking-wide text-[#5C6B80] text-center py-2 px-3 flex items-center justify-center gap-2">
+        <Info className="w-3.5 h-3.5 shrink-0" />
+        INDEPENDENT PROTOTYPE · SYNTHETIC RAILWAY DATA — NOT LIVE IRCTC · NOT AN OFFICIAL GOVERNMENT PRODUCT
       </div>
 
       <main className="flex-1">
         {/* LANDING */}
-        {view==="landing" && (
-          <div className="max-w-[1120px] mx-auto px-4 sm:px-6 pt-8 sm:pt-12 pb-10">
-            <div className="grid lg:grid-cols-[1.1fr_0.9fr] gap-8 items-start">
+        {view === "landing" && (
+          <div className="max-w-[1120px] mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-8">
+            <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-6 lg:gap-8 items-start">
               <div>
-                <div className="inline-flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-white border border-[#F0E6D8] text-[#6B7280] mb-4">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Public journey layer for Indian Railways
+                <div className="inline-flex items-center gap-2 bg-white border border-[#E8E0D1] px-3 py-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[#0E9F4B] animate-pulse" />
+                  <span className="text-[11px] font-mono tracking-[0.12em] text-[#1B3A5C]">PUBLIC JOURNEY LAYER · INDIAN RAILWAYS</span>
                 </div>
-                <h1 className="text-[32px] sm:text-[42px] font-bold tracking-tight leading-[1.05]">
-                  Where are <span className="text-[#E85D04]">you going?</span>
+                <h1 className="font-display text-[40px] sm:text-[54px] leading-[0.9] mt-4">
+                  WHERE ARE
+                  <br />
+                  <span className="text-[#1B3A5C] bg-[#F2B705] px-1">YOU GOING?</span>
                 </h1>
-                <p className="mt-3 text-[15px] sm:text-[16px] leading-6 text-[#4B5563] max-w-[560px]">
-                  Don&apos;t search for trains. <span className="font-medium text-black">Plan your journey.</span> Tell us your destination and we&apos;ll build the simplest practical railway journey for you — including connections, transfer time and what to do if something changes.
+                <p className="mt-4 text-[14px] leading-6 text-[#1B3A5C]/80 max-w-[520px] border-l-[3px] border-[#F2B705] pl-4">
+                  Don&apos;t search for trains. <span className="font-semibold text-[#1B3A5C]">Plan your journey.</span> Tell us your destination and we&apos;ll build the simplest practical railway journey — including connections, transfer time and what to do if something changes.
                 </p>
 
-                {/* Search Card */}
-                <div className="mt-6 bg-white rounded-[20px] border border-[#F0E6D8] shadow-[0_8px_30px_rgba(0,0,0,0.06)] p-4 sm:p-5">
+                {/* Search Card - ticket form */}
+                <div className="mt-6 bg-white border border-[#E8E0D1] p-4 sm:p-4">
+                  <div className="flex items-center justify-between border-b border-[#E8E0D1] pb-3 mb-4">
+                    <span className="font-display text-[12px] tracking-[0.16em] text-[#1B3A5C]">JOURNEY ENQUIRY</span>
+                    <span className="font-mono text-[11px] tracking-wide text-[#5C6B80]">NO LOGIN REQUIRED</span>
+                  </div>
                   <div className="grid gap-3">
                     {/* From */}
                     <div className="relative">
-                      <label className="text-xs font-semibold tracking-wide text-[#6B7280] uppercase">From</label>
-                      <button onClick={()=>setFromOpen(v=>!v)} className="mt-1 w-full flex items-center justify-between rounded-xl border border-[#E5DDD3] bg-[#FFFBF5] px-4 py-3 text-left hover:bg-white transition">
+                      <label className="font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5" /> FROM
+                      </label>
+                      <button
+                        onClick={() => setFromOpen((v) => !v)}
+                        className="mt-1 w-full flex items-center justify-between bg-[#FAF7F0] border border-[#E8E0D1] px-3 py-3 text-left hover:bg-white transition group"
+                      >
                         <div>
-                          <div className="font-semibold">{from}</div>
-                          <div className="text-xs text-[#6B7280]">{stations.find(s=>s.name===from)?.code ?? "NDLS"} · {stations.find(s=>s.name===from)?.state ?? ""}</div>
+                          <div className="font-display text-[18px] tracking-wide leading-none">{from.toUpperCase()}</div>
+                          <div className="font-mono text-[11px] text-[#5C6B80] mt-0.5">
+                            {stations.find((s) => s.name === from)?.code ?? "NDLS"} · {stations.find((s) => s.name === from)?.state ?? ""}
+                          </div>
                         </div>
-                        <span className="text-[#9CA3AF]">▾</span>
+                        <ChevronDown className="w-4 h-4 text-[#5C6B80] group-hover:text-[#1B3A5C]" />
                       </button>
                       {fromOpen && (
-                        <div className="absolute z-20 mt-2 w-full bg-white border border-[#E5DDD3] rounded-xl shadow-xl max-h-64 overflow-auto">
-                          {stations.slice(0,30).map(s=>(
-                            <button key={s.id} onClick={()=>{setFrom(s.name); setFromOpen(false)}} className={`w-full text-left px-4 py-2.5 hover:bg-[#FFF4E6] flex justify-between items-center ${from===s.name?'bg-[#FFF4E6] font-semibold':''}`}>
-                              <span>{s.name}</span><span className="text-xs text-[#9CA3AF]">{s.code}</span>
+                        <div className="absolute z-20 mt-1 w-full bg-white border border-[#E8E0D1] max-h-64 overflow-auto shadow-[4px_4px_0_#1B3A5C]">
+                          {stations.slice(0, 30).map((s) => (
+                            <button
+                              key={s.id}
+                              onClick={() => {
+                                setFrom(s.name);
+                                setFromOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2.5 flex justify-between items-center border-b border-[#FAF7F0] last:border-0 hover:bg-[#FAF7F0] ${from === s.name ? "bg-[#1B3A5C] text-white hover:bg-[#1B3A5C]" : "text-[#1B3A5C]"}`}
+                            >
+                              <span className="font-medium text-sm">{s.name}</span>
+                              <span className="font-mono text-xs opacity-70">{s.code}</span>
                             </button>
                           ))}
                         </div>
                       )}
                     </div>
                     <div className="flex justify-center -my-1">
-                      <div className="w-8 h-8 rounded-full bg-[#1A1A1A] text-white grid place-items-center text-sm">⇅</div>
+                      <div className="w-7 h-7 bg-[#1B3A5C] text-[#F2B705] grid place-items-center border border-[#0F2340]">
+                        <ArrowUpDown className="w-3.5 h-3.5" />
+                      </div>
                     </div>
                     {/* To */}
                     <div className="relative">
-                      <label className="text-xs font-semibold tracking-wide text-[#6B7280] uppercase">To</label>
-                      <button onClick={()=>setToOpen(v=>!v)} className="mt-1 w-full flex items-center justify-between rounded-xl border border-[#E5DDD3] bg-white px-4 py-3 text-left hover:bg-[#FFFBF5] transition">
+                      <label className="font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] flex items-center gap-1.5">
+                        <Flag className="w-3.5 h-3.5" /> TO
+                      </label>
+                      <button
+                        onClick={() => setToOpen((v) => !v)}
+                        className="mt-1 w-full flex items-center justify-between bg-white border border-[#1B3A5C] px-3 py-3 text-left hover:bg-[#FAF7F0] transition group"
+                      >
                         <div>
-                          <div className="font-semibold">{to}</div>
-                          <div className="text-xs text-[#6B7280]">{stations.find(s=>s.name===to)?.code ?? "MAO"} · {stations.find(s=>s.name===to)?.state ?? "Goa"}</div>
+                          <div className="font-display text-[18px] tracking-wide leading-none">{to.toUpperCase()}</div>
+                          <div className="font-mono text-[11px] text-[#5C6B80] mt-0.5">
+                            {stations.find((s) => s.name === to)?.code ?? "MAO"} · {stations.find((s) => s.name === to)?.state ?? "Goa"}
+                          </div>
                         </div>
-                        <span className="text-[#9CA3AF]">▾</span>
+                        <ChevronDown className="w-4 h-4 text-[#5C6B80]" />
                       </button>
                       {toOpen && (
-                        <div className="absolute z-20 mt-2 w-full bg-white border border-[#E5DDD3] rounded-xl shadow-xl max-h-64 overflow-auto">
-                          {stations.map(s=>(
-                            <button key={s.id} onClick={()=>{setTo(s.name); setToOpen(false)}} className={`w-full text-left px-4 py-2.5 hover:bg-[#FFF4E6] flex justify-between items-center ${to===s.name?'bg-[#FFF4E6] font-semibold':''}`}>
-                              <span>{s.name}</span><span className="text-xs text-[#9CA3AF]">{s.code}</span>
+                        <div className="absolute z-20 mt-1 w-full bg-white border border-[#E8E0D1] max-h-64 overflow-auto shadow-[4px_4px_0_#1B3A5C]">
+                          {stations.map((s) => (
+                            <button
+                              key={s.id}
+                              onClick={() => {
+                                setTo(s.name);
+                                setToOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2.5 flex justify-between items-center border-b border-[#FAF7F0] hover:bg-[#FAF7F0] ${to === s.name ? "bg-[#1B3A5C] text-white" : "text-[#1B3A5C]"}`}
+                            >
+                              <span className="font-medium text-sm">{s.name}</span>
+                              <span className="font-mono text-xs opacity-70">{s.code}</span>
                             </button>
                           ))}
                         </div>
@@ -246,488 +362,805 @@ export default function Home() {
                     </div>
                     {/* Date */}
                     <div>
-                      <label className="text-xs font-semibold tracking-wide text-[#6B7280] uppercase">Date</label>
-                      <input type="date" value={date} onChange={e=>setDate(e.target.value)} className="mt-1 w-full rounded-xl border border-[#E5DDD3] bg-white px-4 py-3 outline-none focus:border-[#E85D04] focus:ring-2 focus:ring-[#E85D04]/20" />
-                      <div className="text-xs text-[#6B7280] mt-1">Showing date: <span className="font-medium text-black">{formatDate(date)}</span></div>
+                      <label className="font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] flex items-center gap-1.5">
+                        <Clock3 className="w-3.5 h-3.5" /> DATE
+                      </label>
+                      <input
+                        type="date"
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                        className="mt-1 w-full bg-white border border-[#E8E0D1] px-3 py-3 font-mono text-sm outline-none focus:border-[#1B3A5C] focus:ring-1 focus:ring-[#1B3A5C]"
+                      />
+                      <div className="font-mono text-[11px] text-[#5C6B80] mt-1.5 flex items-center gap-1">
+                        <Timer className="w-3 h-3" /> {formatDateShort(date).toUpperCase()} · {formatDate(date)}
+                      </div>
                     </div>
                   </div>
-                  <button onClick={doSearch} className="mt-4 w-full rounded-full bg-[#E85D04] hover:bg-[#D45300] text-white font-semibold py-3.5 transition shadow-[0_6px_20px_rgba(232,93,4,0.35)]">
-                    Find my journey →
+                  <button
+                    onClick={doSearch}
+                    className="mt-4 w-full bg-[#F2B705] text-[#1B3A5C] border-[2px] border-[#1B3A5C] font-display text-[15px] tracking-[0.08em] py-3 flex items-center justify-center gap-2 hover:brightness-105 transition shadow-[3px_3px_0_#1B3A5C] active:shadow-none active:translate-x-[1px] active:translate-y-[1px]"
+                  >
+                    FIND MY JOURNEY <ArrowRight className="w-4 h-4" />
                   </button>
-                  <button onClick={()=>{setFrom("New Delhi"); setTo("Goa"); setDate(todayISO()); setPref("easy"); doSearch()}} className="mt-2 w-full text-sm text-[#6B7280] hover:text-black py-2">
-                    Try a sample journey — New Delhi → Goa
+                  <button
+                    onClick={() => {
+                      setFrom("New Delhi");
+                      setTo("Goa");
+                      setDate(todayISO());
+                      setPref("easy");
+                      doSearch();
+                    }}
+                    className="mt-3 w-full text-[13px] text-[#1B3A5C] underline decoration-[#F2B705] decoration-2 underline-offset-4 hover:text-[#0F2340] py-1 flex items-center justify-center gap-1.5"
+                  >
+                    <Search className="w-3.5 h-3.5" /> Try sample: New Delhi → Goa
                   </button>
-                  <p className="text-[11px] text-[#9CA3AF] text-center mt-2">No login required · Synthetic data · No payment</p>
+                  <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] text-center mt-2">SYNTHETIC DATA · NO PAYMENT · NO OTP</p>
                 </div>
 
-                <div className="mt-6 flex flex-wrap gap-2 text-xs">
-                  <span className="px-3 py-1.5 rounded-full bg-white border border-[#F0E6D8]">✓ Checks interchange time</span>
-                  <span className="px-3 py-1.5 rounded-full bg-white border border-[#F0E6D8]">✓ Same-station awareness</span>
-                  <span className="px-3 py-1.5 rounded-full bg-white border border-[#F0E6D8]">✓ Delay risk explained</span>
-                  <span className="px-3 py-1.5 rounded-full bg-white border border-[#F0E6D8]">✓ Recovery options</span>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {[
+                    ["Checks interchange time", ShieldCheck],
+                    ["Same-station awareness", MapPin],
+                    ["Delay risk explained", Clock3],
+                    ["Recovery options", Route],
+                  ].map(([label, Icon]: any) => (
+                    <span key={label} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-[#E8E0D1] font-mono text-[11px] tracking-wide">
+                      <Icon className="w-3 h-3" /> {label}
+                    </span>
+                  ))}
                 </div>
               </div>
 
-              {/* Visual Journey Preview */}
-              <div className="lg:sticky lg:top-[80px]">
-                <div className="bg-white rounded-[20px] border border-[#F0E6D8] overflow-hidden shadow-sm">
-                  <div className="px-5 py-4 border-b border-[#F0E6D8] flex items-center justify-between">
-                    <span className="text-xs font-semibold tracking-widest text-[#9CA3AF] uppercase">Preview</span>
-                    <span className="text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">● Live prototype</span>
+              {/* Visual Journey Preview - station board */}
+              <div className="lg:sticky lg:top-[68px]">
+                <div className="bg-white border border-[#E8E0D1] overflow-hidden">
+                  <div className="bg-[#1B3A5C] text-[#FAF7F0] px-4 py-2.5 flex items-center justify-between">
+                    <span className="font-display text-[11px] tracking-[0.16em]">PREVIEW — TIMETABLE</span>
+                    <span className="font-mono text-[10px] tracking-[0.12em] bg-[#F2B705] text-[#1B3A5C] px-2 py-1">LIVE PROTOTYPE</span>
                   </div>
-                  <div className="p-5">
-                    <div className="text-sm font-semibold">New Delhi → Goa</div>
-                    <div className="text-xs text-[#6B7280] mb-4">Via Mumbai · Example synthetic journey</div>
-                    {/* mini timeline */}
-                    <div className="relative pl-6 border-l-2 border-dashed border-[#F0E6D8] space-y-5">
-                      <div className="relative">
-                        <span className="absolute -left-[29px] top-1 w-3 h-3 rounded-full bg-[#1A1A1A] border-2 border-white shadow" />
-                        <div className="text-xs text-[#9CA3AF]">10:55 AM</div>
-                        <div className="font-semibold text-sm">New Delhi</div>
-                        <div className="text-xs inline-flex items-center gap-1 mt-1 px-2 py-1 rounded-full bg-[#FFF4E6] border border-[#F0E6D8]">🚆 12952 Rajdhani · 3A</div>
+                  <div className="p-4 sm:p-5">
+                    <div className="flex items-baseline justify-between">
+                      <div className="font-display text-[14px] tracking-wide">NEW DELHI → GOA</div>
+                      <span className="font-mono text-[11px] text-[#5C6B80]">VIA MUMBAI · SYNTHETIC</span>
+                    </div>
+
+                    {/* rail timeline mini */}
+                    <div className="mt-4 relative">
+                      {/* vertical rail */}
+                      <div className="absolute left-[16px] top-[8px] bottom-[8px] w-[3px] bg-[#1B3A5C]" />
+                      {/* sleepers */}
+                      <div className="absolute left-[8px] top-[8px] bottom-[8px] w-[19px] flex flex-col justify-between py-2 pointer-events-none">
+                        {Array.from({ length: 12 }).map((_, i) => (
+                          <div key={i} className="h-[2px] bg-[#1B3A5C] w-full opacity-40" />
+                        ))}
                       </div>
-                      <div className="relative">
-                        <span className="absolute -left-[29px] top-1 w-3 h-3 rounded-full bg-white border-2 border-[#1A1A1A]" />
-                        <div className="text-xs text-[#9CA3AF]">06:55 AM</div>
-                        <div className="font-semibold text-sm">Mumbai Central</div>
-                        <div className="mt-2 rounded-xl bg-[#F8FAF8] border border-[#E5EEE5] p-3">
-                          <div className="text-xs font-semibold flex items-center gap-1.5">🔄 Change trains · <span className="text-emerald-700">2h 35m</span> <span className="ml-auto px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[11px]">● Low risk</span></div>
-                          <div className="text-xs text-[#6B7280] mt-1">Same station · 12 min walk · Enough buffer for delay</div>
+                      <div className="space-y-4 pl-8">
+                        <div className="relative flex gap-3">
+                          <span className="absolute -left-[24px] top-1 w-[14px] h-[14px] rounded-full bg-[#1B3A5C] border-[3px] border-[#FAF7F0] shadow-[0_0_0_1px_#1B3A5C]" />
+                          <div className="flex-1">
+                            <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">10:55</div>
+                            <div className="inline-block bg-[#1B3A5C] text-[#FAF7F0] font-display text-[12px] tracking-wide px-2 py-1 leading-none mt-1">NEW DELHI</div>
+                            <div className="font-mono text-[11px] text-[#5C6B80] mt-1 flex items-center gap-1">
+                              <TrainFront className="w-3 h-3" /> 12952 RAJDHANI · 3A
+                            </div>
+                          </div>
+                        </div>
+                        <div className="relative">
+                          <span className="absolute -left-[24px] top-1 w-[14px] h-[14px] rounded-full bg-white border-[3px] border-[#1B3A5C]" />
+                          <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">06:55</div>
+                          <div className="inline-block bg-white border border-[#1B3A5C] text-[#1B3A5C] font-display text-[12px] tracking-wide px-2 py-1 leading-none mt-1">
+                            MUMBAI CENTRAL
+                          </div>
+                          <div className="mt-2 border border-[#E8E0D1] bg-[#FAF7F0] p-2.5 flex items-start gap-2">
+                            <ArrowLeftRight className="w-3.5 h-3.5 text-[#1B3A5C] mt-0.5 shrink-0" />
+                            <div className="flex-1">
+                              <div className="font-mono text-[11px] font-semibold flex items-center gap-2">
+                                CHANGE · <span className="bg-[#1B3A5C] text-white px-1">2H 35M</span>
+                                <span className="ml-auto inline-flex items-center gap-1 font-mono text-[10px] tracking-wide text-white px-1.5 py-0.5" style={{ background: RISK_COLOR.low }}>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                                  LOW
+                                </span>
+                              </div>
+                              <div className="font-mono text-[11px] text-[#5C6B80] mt-1">SAME STATION · 12 MIN WALK · BUFFER FOR DELAY</div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="relative flex gap-3">
+                          <span className="absolute -left-[24px] top-1 w-[14px] h-[14px] rounded-full bg-[#1B3A5C] border-[3px] border-[#FAF7F0] shadow-[0_0_0_1px_#1B3A5C]" />
+                          <div className="flex-1">
+                            <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">09:30</div>
+                            <div className="inline-block bg-[#1B3A5C] text-[#FAF7F0] font-display text-[12px] tracking-wide px-2 py-1 leading-none mt-1">MUMBAI CENTRAL</div>
+                            <div className="font-mono text-[11px] text-[#5C6B80] mt-1 flex items-center gap-1">
+                              <TrainFront className="w-3 h-3" /> 10104 MANDOVI · SL
+                            </div>
+                          </div>
+                        </div>
+                        <div className="relative flex gap-3">
+                          <span className="absolute -left-[24px] top-1 w-[14px] h-[14px] bg-[#F2B705] border-[2px] border-[#1B3A5C] grid place-items-center">
+                            <Flag className="w-2.5 h-2.5 text-[#1B3A5C]" />
+                          </span>
+                          <div>
+                            <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">17:20</div>
+                            <div className="inline-block bg-[#F2B705] border border-[#1B3A5C] text-[#1B3A5C] font-display text-[12px] tracking-wide px-2 py-1 leading-none mt-1">MADGAON · GOA</div>
+                          </div>
                         </div>
                       </div>
-                      <div className="relative">
-                        <span className="absolute -left-[29px] top-1 w-3 h-3 rounded-full bg-[#1A1A1A] border-2 border-white shadow" />
-                        <div className="text-xs text-[#9CA3AF]">09:30 AM</div>
-                        <div className="font-semibold text-sm">Mumbai Central</div>
-                        <div className="text-xs inline-flex items-center gap-1 mt-1 px-2 py-1 rounded-full bg-[#FFF4E6] border border-[#F0E6D8]">🚆 10104 Mandovi · SL</div>
-                      </div>
-                      <div className="relative">
-                        <span className="absolute -left-[29px] top-1 w-4 h-4 rounded-full bg-[#E85D04] grid place-items-center text-white text-[10px]">🏁</span>
-                        <div className="text-xs text-[#9CA3AF]">05:20 PM</div>
-                        <div className="font-semibold text-sm">Madgaon, Goa</div>
-                      </div>
                     </div>
-                    <div className="mt-5 grid grid-cols-3 gap-2 text-center">
-                      <div className="rounded-xl bg-[#FFFBF5] border border-[#F0E6D8] p-2.5">
-                        <div className="text-xs text-[#9CA3AF]">Duration</div><div className="font-semibold text-sm">31h 25m</div>
-                      </div>
-                      <div className="rounded-xl bg-[#FFFBF5] border border-[#F0E6D8] p-2.5">
-                        <div className="text-xs text-[#9CA3AF]">Changes</div><div className="font-semibold text-sm">1</div>
-                      </div>
-                      <div className="rounded-xl bg-[#FFFBF5] border border-[#F0E6D8] p-2.5">
-                        <div className="text-xs text-[#9CA3AF]">Est. fare</div><div className="font-semibold text-sm">₹2,845</div>
-                      </div>
+                    <div className="mt-4 grid grid-cols-3 gap-2">
+                      {[
+                        ["DURATION", "31H 25M"],
+                        ["CHANGES", "1"],
+                        ["FARE", "₹2,845"],
+                      ].map(([k, v]) => (
+                        <div key={k} className="border border-[#E8E0D1] bg-[#FAF7F0] p-2 text-center">
+                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80]">{k}</div>
+                          <div className="font-mono text-[13px] font-semibold text-[#1B3A5C] mt-0.5">{v}</div>
+                        </div>
+                      ))}
                     </div>
-                    <p className="text-[11px] text-[#9CA3AF] mt-3 text-center">Timeline is the visual identity — progressive disclosure, not tables.</p>
+                    <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] mt-3 text-center">TIMELINE IS THE VISUAL IDENTITY — PROGRESSIVE DISCLOSURE</p>
                   </div>
                 </div>
-                <div className="mt-3 text-center text-xs text-[#9CA3AF]">Built with OpenAI as explanation layer — not as railway database</div>
+                <div className="mt-2 text-center font-mono text-[11px] tracking-wide text-[#5C6B80]">BUILT WITH OPENAI AS EXPLANATION LAYER — NOT A RAILWAY DATABASE</div>
               </div>
             </div>
           </div>
         )}
 
         {/* PREFERENCES */}
-        {view==="prefs" && (
-          <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-8 pb-10">
-            <button onClick={()=>setView("landing")} className="text-sm text-[#6B7280] hover:text-black mb-4">← Back</button>
-            <h2 className="text-[28px] font-bold tracking-tight">What matters most to you?</h2>
-            <p className="text-sm text-[#6B7280] mt-1">We&apos;ll rank journeys accordingly. You can change this anytime.</p>
-            <div className="grid gap-3 mt-6">
-              <button onClick={()=>setPref("easy")} className={`text-left rounded-2xl border-2 p-4 flex gap-4 items-start transition ${pref==="easy" ? "border-[#1A1A1A] bg-white shadow-sm" : "border-[#F0E6D8] bg-white hover:border-[#E5DDD3]"}`}>
-                <span className="text-2xl">🧘</span>
-                <div className="flex-1">
-                  <div className="font-semibold flex items-center gap-2">Easy journey {pref==="easy" && <span className="text-xs px-2 py-0.5 rounded-full bg-[#1A1A1A] text-white">Selected</span>}</div>
-                  <div className="text-sm text-[#6B7280]">Fewer changes and more time between trains. Best if you&apos;re travelling with family.</div>
-                </div>
-                <span className={`w-5 h-5 rounded-full border-2 grid place-items-center ${pref==="easy"?"border-[#1A1A1A]":"border-[#E5DDD3]"}`}><span className={`w-2.5 h-2.5 rounded-full ${pref==="easy"?"bg-[#1A1A1A]":""}`} /></span>
-              </button>
-              <button onClick={()=>setPref("fastest")} className={`text-left rounded-2xl border-2 p-4 flex gap-4 items-start transition ${pref==="fastest" ? "border-[#1A1A1A] bg-white shadow-sm" : "border-[#F0E6D8] bg-white hover:border-[#E5DDD3]"}`}>
-                <span className="text-2xl">⚡</span>
-                <div className="flex-1">
-                  <div className="font-semibold flex items-center gap-2">Fastest {pref==="fastest" && <span className="text-xs px-2 py-0.5 rounded-full bg-[#1A1A1A] text-white">Selected</span>}</div>
-                  <div className="text-sm text-[#6B7280]">Get there in the shortest possible time — tighter connections.</div>
-                </div>
-                <span className={`w-5 h-5 rounded-full border-2 grid place-items-center ${pref==="fastest"?"border-[#1A1A1A]":"border-[#E5DDD3]"}`}><span className={`w-2.5 h-2.5 rounded-full ${pref==="fastest"?"bg-[#1A1A1A]":""}`} /></span>
-              </button>
-              <button onClick={()=>setPref("cheapest")} className={`text-left rounded-2xl border-2 p-4 flex gap-4 items-start transition ${pref==="cheapest" ? "border-[#1A1A1A] bg-white shadow-sm" : "border-[#F0E6D8] bg-white hover:border-[#E5DDD3]"}`}>
-                <span className="text-2xl">💰</span>
-                <div className="flex-1">
-                  <div className="font-semibold flex items-center gap-2">Cheapest {pref==="cheapest" && <span className="text-xs px-2 py-0.5 rounded-full bg-[#1A1A1A] text-white">Selected</span>}</div>
-                  <div className="text-sm text-[#6B7280]">Minimize estimated journey cost — may be longer.</div>
-                </div>
-                <span className={`w-5 h-5 rounded-full border-2 grid place-items-center ${pref==="cheapest"?"border-[#1A1A1A]":"border-[#E5DDD3]"}`}><span className={`w-2.5 h-2.5 rounded-full ${pref==="cheapest"?"bg-[#1A1A1A]":""}`} /></span>
-              </button>
-            </div>
-            <div className="mt-6 rounded-2xl bg-white border border-[#F0E6D8] p-4">
-              <div className="text-sm font-semibold mb-2">Optional</div>
-              <label className="flex items-center gap-2 text-sm py-1.5"><input type="checkbox" checked={extras.children} onChange={e=>setExtras({...extras, children:e.target.checked})} className="rounded" /> Travelling with children</label>
-              <label className="flex items-center gap-2 text-sm py-1.5"><input type="checkbox" checked={extras.elderly} onChange={e=>setExtras({...extras, elderly:e.target.checked})} className="rounded" /> Travelling with elderly passenger</label>
-              <label className="flex items-center gap-2 text-sm py-1.5"><input type="checkbox" checked={extras.fewerTransfers} onChange={e=>setExtras({...extras, fewerTransfers:e.target.checked})} className="rounded" /> Prefer fewer station transfers</label>
-              {(extras.children || extras.elderly) && <p className="text-xs text-[#9CA3AF] mt-2">We&apos;ll favour larger buffers and simpler station transfers.</p>}
-            </div>
-            <button onClick={find} className="mt-6 w-full rounded-full bg-[#1A1A1A] text-white font-semibold py-3.5 hover:bg-black transition">
-              Find journeys → {from} → {to}
+        {view === "prefs" && (
+          <div className="max-w-[680px] mx-auto px-4 sm:px-6 pt-6 pb-8">
+            <button onClick={() => setView("landing")} className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] hover:text-[#1B3A5C] mb-4">
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" /> BACK
             </button>
-            <p className="text-center text-xs text-[#9CA3AF] mt-2">We&apos;ll show 3 curated options, not a giant list.</p>
+            <h2 className="font-display text-[28px] leading-none">WHAT MATTERS MOST?</h2>
+            <p className="text-[13px] text-[#5C6B80] mt-2">We&apos;ll rank journeys accordingly. You can change this anytime.</p>
+            <div className="grid gap-3 mt-6">
+              {[
+                { id: "easy", label: "EASY JOURNEY", icon: Leaf, desc: "Fewer changes and more time between trains. Best for family travel." },
+                { id: "fastest", label: "FASTEST", icon: Zap, desc: "Shortest total time — tighter connections." },
+                { id: "cheapest", label: "CHEAPEST", icon: Wallet, desc: "Minimize estimated cost — may be longer." },
+              ].map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setPref(c.id as Preference)}
+                  className={`text-left border-[2px] p-4 flex gap-4 items-start transition ${pref === c.id ? "bg-white border-[#1B3A5C] shadow-[3px_3px_0_#1B3A5C]" : "bg-white border-[#E8E0D1] hover:border-[#5C6B80]"}`}
+                >
+                  <span className={`w-9 h-9 grid place-items-center border shrink-0 ${pref === c.id ? "bg-[#F2B705] border-[#1B3A5C] text-[#1B3A5C]" : "bg-[#FAF7F0] border-[#E8E0D1] text-[#1B3A5C]"}`}>
+                    <c.icon className="w-4 h-4" />
+                  </span>
+                  <div className="flex-1">
+                    <div className="font-display text-[14px] tracking-wide flex items-center gap-2">
+                      {c.label} {pref === c.id && <span className="font-mono text-[10px] tracking-wide bg-[#1B3A5C] text-white px-1.5 py-0.5">SELECTED</span>}
+                    </div>
+                    <div className="text-[13px] text-[#5C6B80] mt-1 leading-4">{c.desc}</div>
+                  </div>
+                  <span className={`w-5 h-5 rounded-full border-[2px] grid place-items-center shrink-0 mt-0.5 ${pref === c.id ? "border-[#1B3A5C]" : "border-[#E8E0D1]"}`}>
+                    <span className={`w-2.5 h-2.5 rounded-full ${pref === c.id ? "bg-[#1B3A5C]" : ""}`} />
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 bg-white border border-[#E8E0D1] p-4">
+              <div className="font-display text-[12px] tracking-[0.12em]">OPTIONAL</div>
+              <label className="flex items-center gap-2 text-[13px] py-1.5 mt-1">
+                <input type="checkbox" checked={extras.children} onChange={(e) => setExtras({ ...extras, children: e.target.checked })} className="accent-[#1B3A5C]" /> Travelling with children
+              </label>
+              <label className="flex items-center gap-2 text-[13px] py-1.5">
+                <input type="checkbox" checked={extras.elderly} onChange={(e) => setExtras({ ...extras, elderly: e.target.checked })} className="accent-[#1B3A5C]" /> Travelling with elderly passenger
+              </label>
+              <label className="flex items-center gap-2 text-[13px] py-1.5">
+                <input type="checkbox" checked={extras.fewerTransfers} onChange={(e) => setExtras({ ...extras, fewerTransfers: e.target.checked })} className="accent-[#1B3A5C]" /> Prefer fewer station transfers
+              </label>
+              {(extras.children || extras.elderly) && <p className="font-mono text-[11px] text-[#5C6B80] mt-2">We&apos;ll favour larger buffers and simpler transfers.</p>}
+            </div>
+            <button onClick={find} className="mt-4 w-full bg-[#F2B705] text-[#1B3A5C] border-[2px] border-[#1B3A5C] font-display text-[14px] tracking-[0.08em] py-3 flex items-center justify-center gap-2 shadow-[3px_3px_0_#1B3A5C] hover:brightness-105">
+              FIND JOURNEYS <ArrowRight className="w-4 h-4" /> {from.toUpperCase()} → {to.toUpperCase()}
+            </button>
+            <p className="text-center font-mono text-[11px] text-[#5C6B80] mt-2">WE&apos;LL SHOW 3 CURATED OPTIONS, NOT A GIANT LIST.</p>
           </div>
         )}
 
         {/* RESULTS */}
-        {view==="results" && (
-          <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-6 pb-10">
-            <button onClick={()=>setView("prefs")} className="text-sm text-[#6B7280] hover:text-black mb-3">← Preferences</button>
-            <div className="flex items-baseline justify-between">
-              <h2 className="text-[24px] sm:text-[28px] font-bold tracking-tight">We found {journeys.length} ways to get there</h2>
-              <span className="text-xs px-2 py-1 rounded-full bg-white border border-[#F0E6D8] text-[#6B7280]">{formatDate(date)}</span>
+        {view === "results" && (
+          <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-6 pb-8">
+            <button onClick={() => setView("prefs")} className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] hover:text-[#1B3A5C] mb-3">
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" /> PREFERENCES
+            </button>
+            <div className="flex items-baseline justify-between gap-4">
+              <h2 className="font-display text-[24px] sm:text-[28px] leading-none">WE FOUND {journeys.length} WAYS</h2>
+              <span className="font-mono text-[11px] tracking-wide bg-white border border-[#E8E0D1] px-2 py-1 shrink-0">{formatDateShort(date).toUpperCase()}</span>
             </div>
-            <p className="text-sm text-[#6B7280] mt-1">Tap a card to see the full timeline and interchange details.</p>
+            <p className="text-[13px] text-[#5C6B80] mt-1">Tap a card to see the full rail timeline and interchange details.</p>
 
             <div className="grid gap-4 mt-6">
               {journeys.map((j, idx) => {
-                const isRecommended = idx===0;
-                const label = isRecommended ? "Best for you" : idx===1 ? "Fastest" : "Cheapest";
-                const transfer = (j.legs.find(l=>l.type==="transfer") as any)?.transfer;
-                const legs = j.legs.filter(l=>l.type==="train") as any[];
+                const isRecommended = idx === 0;
+                const label = isRecommended ? "BEST FOR YOU" : idx === 1 ? "FASTEST" : "CHEAPEST";
+                const transfer = (j.legs.find((l) => l.type === "transfer") as any)?.transfer;
+                const legs = j.legs.filter((l) => l.type === "train") as any[];
+                const risk = j.riskLevel;
                 return (
-                  <div key={j.id} className={`rounded-[20px] border bg-white overflow-hidden ${isRecommended?"border-[#1A1A1A] shadow-[0_8px_24px_rgba(0,0,0,0.08)]":"border-[#F0E6D8]"}`}>
-                    {isRecommended && <div className="bg-[#1A1A1A] text-white text-xs font-semibold tracking-widest px-4 py-1.5">BEST FOR YOU</div>}
-                    <div className="p-4 sm:p-5">
+                  <div
+                    key={j.id}
+                    className={`bg-white border overflow-hidden flex ${isRecommended ? "border-[#1B3A5C] shadow-[4px_4px_0_#1B3A5C]" : "border-[#E8E0D1]"} ${isRecommended ? "scale-[1.01]" : ""}`}
+                  >
+                    {/* left edge strip */}
+                    <div className="w-[6px] shrink-0" style={{ background: RISK_COLOR[risk] ?? "#1B3A5C" }} />
+                    <div className={`flex-1 ${isRecommended ? "p-5 sm:p-6" : "p-4"}`}>
+                      {isRecommended && (
+                        <div className="font-display text-[11px] tracking-[0.16em] bg-[#F2B705] text-[#1B3A5C] border border-[#1B3A5C] inline-block px-2 py-1 mb-3">RECOMMENDED</div>
+                      )}
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold tracking-widest text-[#9CA3AF] uppercase">{label}</span>
-                        <RiskBadge risk={j.riskLevel} />
+                        <span className="font-display text-[11px] tracking-[0.14em] text-[#5C6B80]">{label}</span>
+                        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-wide text-white px-2 py-1" style={{ background: RISK_COLOR[risk] }}>
+                          <span className="w-1.5 h-1.5 rounded-full bg-white" /> {RISK_LABEL[risk].toUpperCase()}
+                        </span>
                       </div>
-                      <div className="mt-2 font-semibold">{j.origin.name} → {j.destination.city} <span className="text-[#9CA3AF] font-normal text-sm">· {formatDate(date)}</span></div>
-                      <div className="mt-3 grid grid-cols-3 gap-2 text-center text-sm">
-                        <div className="rounded-xl bg-[#FFFBF5] border border-[#F0E6D8] p-2.5"><div className="text-[11px] text-[#9CA3AF]">Trains</div><div className="font-semibold">🚆 {legs.length} trains</div><div className="text-xs text-[#6B7280]">{j.interchangeCount} change</div></div>
-                        <div className="rounded-xl bg-[#FFFBF5] border border-[#F0E6D8] p-2.5"><div className="text-[11px] text-[#9CA3AF]">Duration</div><div className="font-semibold">⏱ {formatDuration(j.totalDurationMinutes)}</div><div className="text-xs text-[#6B7280]">{transfer?formatDuration(transfer.durationMinutes)+" change":"Direct"}</div></div>
-                        <div className="rounded-xl bg-[#FFFBF5] border border-[#F0E6D8] p-2.5"><div className="text-[11px] text-[#9CA3AF]">Est. fare</div><div className="font-semibold">₹{j.totalCost.toLocaleString("en-IN")}</div><div className="text-xs text-[#6B7280]">AC 3-tier</div></div>
+                      <div className={`font-display tracking-wide mt-2 ${isRecommended ? "text-[16px]" : "text-[14px]"}`}>
+                        {j.origin.name.toUpperCase()} → {j.destination.city.toUpperCase()} <span className="font-mono font-normal text-[11px] text-[#5C6B80]">· {formatDateShort(date).toUpperCase()}</span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2.5">
+                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
+                            <TrainFront className="w-3 h-3" /> TRAINS
+                          </div>
+                          <div className="font-mono text-[13px] font-semibold text-[#1B3A5C] mt-1">
+                            {legs.length} · {j.interchangeCount} CHANGE
+                          </div>
+                        </div>
+                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2.5">
+                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
+                            <Clock3 className="w-3 h-3" /> DURATION
+                          </div>
+                          <div className="font-mono text-[13px] font-semibold text-[#1B3A5C] mt-1">{formatDuration(j.totalDurationMinutes).toUpperCase()}</div>
+                          <div className="font-mono text-[11px] text-[#5C6B80]">{transfer ? formatDuration(transfer.durationMinutes).toUpperCase() + " CHANGE" : "DIRECT"}</div>
+                        </div>
+                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2.5">
+                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
+                            <IndianRupee className="w-3 h-3" /> FARE
+                          </div>
+                          <div className="font-mono text-[13px] font-semibold text-[#1B3A5C] mt-1">₹{j.totalCost.toLocaleString("en-IN")}</div>
+                          <div className="font-mono text-[11px] text-[#5C6B80]">AC 3-TIER</div>
+                        </div>
                       </div>
                       {transfer && (
-                        <div className="mt-3 rounded-xl bg-[#F8FAF8] border border-[#E5EEE5] p-3 flex items-start gap-2">
-                          <span className="mt-0.5">
-                            {j.riskLevel==="low" ? "🟢" : j.riskLevel==="medium" ? "🟡" : "🔴"}
-                          </span>
-                          <div className="text-sm">
-                            <span className="font-medium">{formatDuration(transfer.durationMinutes)} connection</span>
-                            <span className="text-[#6B7280]"> — {transfer.reason}</span>
+                        <div className="mt-3 border border-[#E8E0D1] bg-[#FAF7F0] p-3 flex items-start gap-2">
+                          {risk === "low" ? (
+                            <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: RISK_COLOR.low }} />
+                          ) : risk === "medium" ? (
+                            <ShieldAlert className="w-4 h-4 shrink-0" style={{ color: RISK_COLOR.medium }} />
+                          ) : (
+                            <OctagonAlert className="w-4 h-4 shrink-0" style={{ color: RISK_COLOR.high }} />
+                          )}
+                          <div className="font-mono text-[12px] leading-4">
+                            <span className="font-semibold text-[#1B3A5C]">{formatDuration(transfer.durationMinutes).toUpperCase()} CONNECTION</span>
+                            <span className="text-[#5C6B80]"> — {transfer.reason}</span>
                           </div>
                         </div>
                       )}
                       <div className="mt-3 flex gap-2">
-                        <button onClick={()=>{setSelected(j); setView("detail"); window.scrollTo({top:0, behavior:"smooth"})}} className={`flex-1 rounded-full py-3 font-semibold text-sm transition ${isRecommended?"bg-[#E85D04] text-white hover:bg-[#D45300]":"bg-white border border-[#E5DDD3] hover:bg-[#FFFBF5]"}`}>
-                          {isRecommended ? "View journey" : "View journey"}
+                        <button
+                          onClick={() => {
+                            setSelected(j);
+                            setView("detail");
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                          className={`flex-1 inline-flex items-center justify-center gap-1.5 font-display text-[13px] tracking-[0.08em] py-2.5 border-[2px] transition ${isRecommended ? "bg-[#F2B705] text-[#1B3A5C] border-[#1B3A5C] shadow-[2px_2px_0_#1B3A5C]" : "bg-white text-[#1B3A5C] border-[#1B3A5C] hover:bg-[#FAF7F0]"}`}
+                        >
+                          VIEW JOURNEY <ChevronRight className="w-3.5 h-3.5" />
                         </button>
-                        <button onClick={()=>saveJourney(j)} className="px-4 rounded-full border border-[#E5DDD3] bg-white text-sm hover:bg-[#FFFBF5]">Save</button>
+                        <button
+                          onClick={() => saveJourney(j)}
+                          className="px-3 border border-[#E8E0D1] bg-white text-[#1B3A5C] hover:bg-[#FAF7F0] grid place-items-center"
+                          aria-label="Save"
+                        >
+                          <Bookmark className="w-4 h-4" />
+                        </button>
                       </div>
                       {isRecommended && j.whyNotFaster && (
-                        <p className="text-xs text-[#6B7280] mt-2 text-center">💡 {j.whyNotFaster}</p>
+                        <p className="font-mono text-[11px] text-[#5C6B80] mt-2 flex gap-1.5">
+                          <Info className="w-3 h-3 shrink-0 mt-0.5" /> {j.whyNotFaster}
+                        </p>
                       )}
                     </div>
                   </div>
                 );
               })}
             </div>
-            <div className="mt-6 rounded-xl bg-[#FFF4E6] border border-[#F0E6D8] p-3 text-xs text-[#7A5A2A] flex gap-2">
-              <span>ℹ️</span><span> Prototype uses synthetic train & delay data — not live availability. Fares are estimates for AC 3-tier on selected date.</span>
+            <div className="mt-4 border border-[#E8E0D1] bg-white p-3 flex gap-2 font-mono text-[11px] leading-4 text-[#5C6B80]">
+              <Info className="w-4 h-4 shrink-0 text-[#1B3A5C]" />
+              Prototype uses synthetic train & delay data — not live availability. Fares are estimates for AC 3-tier on selected date.
             </div>
           </div>
         )}
 
         {/* DETAIL */}
-        {view==="detail" && selected && (
-          <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-6 pb-10">
-            <button onClick={()=>setView("results")} className="text-sm text-[#6B7280] hover:text-black mb-3">← Back to results</button>
-            <h2 className="text-[26px] font-bold tracking-tight">Your journey to {selected.destination.city}</h2>
-            <p className="text-sm text-[#6B7280]">{selected.origin.name} → {selected.destination.name} · {formatDate(date)}</p>
+        {view === "detail" && selected && (
+          <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-6 pb-8">
+            <button onClick={() => setView("results")} className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] hover:text-[#1B3A5C] mb-3">
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" /> BACK TO RESULTS
+            </button>
+            <h2 className="font-display text-[28px] leading-none">YOUR JOURNEY TO {selected.destination.city.toUpperCase()}</h2>
+            <p className="font-mono text-[12px] text-[#5C6B80] mt-1">
+              {selected.origin.name.toUpperCase()} → {selected.destination.name.toUpperCase()} · {formatDate(date).toUpperCase()}
+            </p>
 
-            {/* Pill stats */}
-            <div className="mt-4 flex flex-wrap gap-2 text-xs">
-              <span className="px-3 py-1.5 rounded-full bg-white border border-[#F0E6D8]">⏱ {formatDuration(selected.totalDurationMinutes)}</span>
-              <span className="px-3 py-1.5 rounded-full bg-white border border-[#F0E6D8]">🔄 {selected.interchangeCount} interchange</span>
-              <span className="px-3 py-1.5 rounded-full bg-white border border-[#F0E6D8]">₹{selected.totalCost.toLocaleString("en-IN")} est.</span>
-              <RiskBadge risk={selected.riskLevel} />
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-wide bg-white border border-[#E8E0D1] px-2.5 py-1">
+                <Clock3 className="w-3 h-3" /> {formatDuration(selected.totalDurationMinutes).toUpperCase()}
+              </span>
+              <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-wide bg-white border border-[#E8E0D1] px-2.5 py-1">
+                <ArrowLeftRight className="w-3 h-3" /> {selected.interchangeCount} INTERCHANGE
+              </span>
+              <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-wide bg-white border border-[#E8E0D1] px-2.5 py-1">
+                <IndianRupee className="w-3 h-3" /> ₹{selected.totalCost.toLocaleString("en-IN")} EST.
+              </span>
+              <span className="inline-flex items-center gap-1 font-mono text-[11px] tracking-wide text-white px-2.5 py-1" style={{ background: RISK_COLOR[selected.riskLevel] }}>
+                <span className="w-1.5 h-1.5 rounded-full bg-white" /> {RISK_LABEL[selected.riskLevel].toUpperCase()}
+              </span>
             </div>
 
-            {/* Timeline */}
-            <div className="mt-6 bg-white rounded-[20px] border border-[#F0E6D8] p-4 sm:p-6">
-              <div className="text-xs font-semibold tracking-widest text-[#9CA3AF] uppercase mb-4">Timeline</div>
-              <div className="relative pl-6 border-l-2 border-[#E5DDD3]">
-                {selected.legs.map((leg, i) => {
-                  if (leg.type==="train") {
-                    return (
-                      <div key={i} className="relative pb-6">
-                        <span className="absolute -left-[29px] top-1 w-3 h-3 rounded-full bg-[#1A1A1A] border-2 border-white shadow" />
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <div className="text-xs text-[#9CA3AF]">{leg.departure} · Day { (leg as any).dayOffset + 1}</div>
-                            <div className="font-semibold">{(leg as any).from.name}</div>
-                            <div className="text-xs text-[#6B7280]">{(leg as any).from.code} · Platform {(leg as any).train.stops.find((s:any)=>s.stationId===(leg as any).from.id)?.platform ?? "—"}</div>
-                          </div>
-                          <span className="text-xs px-2 py-1 rounded-full bg-[#FFF4E6] border border-[#F0E6D8]">🚆 {(leg as any).train.number} · {(leg as any).train.name}</span>
-                        </div>
-                        <div className="mt-2 ml-1 border-l-2 border-dotted border-[#E5DDD3] pl-4 py-2">
-                          <div className="text-xs text-[#6B7280]">On board for {formatDuration((leg as any).train.durationMinutes)} · Sleeper ₹{(leg as any).train.fare.sleeper} · 3A ₹{(leg as any).train.fare.ac3} · { (leg as any).train.reliability}% on-time · avg delay {(leg as any).train.avgDelay}m</div>
-                        </div>
-                        <div className="flex justify-between items-start mt-2">
-                          <div>
-                            <div className="text-xs text-[#9CA3AF]">{leg.arrival} · {(leg as any).dayOffset ? "Next day" : ""}</div>
-                            <div className="font-semibold">{(leg as any).to.name}</div>
-                            <div className="text-xs text-[#6B7280]">{(leg as any).to.code}</div>
-                          </div>
-                          <span className="text-xs text-[#9CA3AF]">{(leg as any).train.days.join(" · ")}</span>
-                        </div>
-                      </div>
-                    );
-                  } else {
-                    const tr = (leg as any).transfer;
-                    return (
-                      <div key={i} className="relative pb-6 -ml-6 pl-6">
-                        <div className="rounded-xl border-2 border-dashed border-[#E5DDD3] bg-[#FFFBF5] p-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-semibold">🔄 Change trains at {getStationName(tr.fromStationId)}</span>
-                            <RiskBadge risk={tr.risk} />
-                          </div>
-                          <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
-                            <div className="bg-white rounded-lg border border-[#F0E6D8] p-2.5 text-center">
-                              <div className="text-xs text-[#9CA3AF]">You have</div>
-                              <div className="font-bold text-lg">{formatDuration(tr.durationMinutes)}</div>
-                              <div className="text-xs text-[#6B7280]">Usable {formatDuration(tr.usableBuffer)} after walk</div>
+            {/* Timeline - rail line */}
+            <div className="mt-6 bg-white border border-[#E8E0D1] p-4 sm:p-5">
+              <div className="font-display text-[11px] tracking-[0.16em] text-[#5C6B80] mb-4">TIMELINE — RAIL LINE</div>
+              <div className="relative pl-10">
+                {/* continuous rail */}
+                <div className="absolute left-[18px] top-2 bottom-2 w-[3px] bg-[#1B3A5C]" />
+                {/* sleepers */}
+                <div className="absolute left-[10px] top-2 bottom-2 w-[19px] flex flex-col justify-between py-1 pointer-events-none">
+                  {Array.from({ length: 20 }).map((_, i) => (
+                    <div key={i} className="h-[2px] bg-[#1B3A5C] w-full opacity-30" />
+                  ))}
+                </div>
+
+                <div className="space-y-1">
+                  {selected.legs.map((leg, i) => {
+                    if (leg.type === "train") {
+                      return (
+                        <div key={i} className="relative pb-4">
+                          <span className="absolute -left-[28px] top-1 w-[14px] h-[14px] rounded-full bg-[#1B3A5C] border-[3px] border-[#FAF7F0] shadow-[0_0_0_1px_#1B3A5C] z-10" />
+                          <div className="flex justify-between items-start gap-4">
+                            <div>
+                              <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">
+                                {(leg as any).departure} · DAY {(leg as any).dayOffset + 1}
+                              </div>
+                              <div className="mt-1 inline-block bg-[#1B3A5C] text-[#FAF7F0] font-display text-[12px] tracking-wide px-2 py-1 leading-none">
+                                {(leg as any).from.name.toUpperCase()}
+                              </div>
+                              <div className="font-mono text-[11px] text-[#5C6B80] mt-1">
+                                {(leg as any).from.code} · PLATFORM {(leg as any).train.stops.find((s: any) => s.stationId === (leg as any).from.id)?.platform ?? "—"}
+                              </div>
                             </div>
-                            <div className="bg-white rounded-lg border border-[#F0E6D8] p-2.5">
-                              <div className="text-xs text-[#9CA3AF]">What you need to do</div>
-                              <ol className="text-xs mt-1 list-decimal pl-4 space-y-0.5">
-                                <li>Get off at {getStationName(tr.fromStationId)}</li>
-                                <li>Follow signs to Platform {(selected.legs[i+1] as any)?.train?.stops?.find((s:any)=>s.stationId===tr.toStationId)?.platform ?? "7"}</li>
-                                <li>Walk ~{tr.requiredWalkingMinutes} min</li>
-                                <li>Board your next train</li>
-                              </ol>
+                            <span className="font-mono text-[11px] bg-[#FAF7F0] border border-[#E8E0D1] px-2 py-1 inline-flex items-center gap-1 shrink-0">
+                              <TrainFront className="w-3 h-3" /> {(leg as any).train.number} · {(leg as any).train.name.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="mt-2 ml-1 border-l border-dashed border-[#E8E0D1] pl-3 py-2">
+                            <div className="font-mono text-[11px] text-[#5C6B80] leading-4">
+                              ON BOARD {formatDuration((leg as any).train.durationMinutes).toUpperCase()} · SL ₹{(leg as any).train.fare.sleeper} · 3A ₹{(leg as any).train.fare.ac3} ·{" "}
+                              {(leg as any).train.reliability}% ON-TIME · AVG {(leg as any).train.avgDelay}M
                             </div>
                           </div>
-                          {tr.requiresStationChange ? (
-                            <div className="mt-2 text-xs bg-amber-50 border border-amber-200 rounded-lg p-2 flex gap-2">
-                              <span>⚠️</span><span><strong>Station transfer required:</strong> {getStationName(tr.fromStationId)} → {getStationName(tr.toStationId)} · Road transfer {tr.stationChangeTransferMinutes}–{tr.stationChangeTransferMinutes!+5} min. {tr.reason}</span>
+                          <div className="flex justify-between items-start mt-2 gap-4">
+                            <div>
+                              <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">
+                                {(leg as any).arrival} {(leg as any).dayOffset ? "· NEXT DAY" : ""}
+                              </div>
+                              <div className="mt-1 inline-block bg-white border border-[#1B3A5C] text-[#1B3A5C] font-display text-[12px] tracking-wide px-2 py-1 leading-none">
+                                {(leg as any).to.name.toUpperCase()}
+                              </div>
+                              <div className="font-mono text-[11px] text-[#5C6B80] mt-1">{(leg as any).to.code}</div>
                             </div>
-                          ) : (
-                            <div className="mt-2 text-xs text-[#6B7280]">✅ {tr.reason}</div>
-                          )}
-                          <details className="mt-2 text-xs">
-                            <summary className="cursor-pointer text-[#6B7280] hover:text-black">How we calculate risk</summary>
-                            <p className="mt-1 text-[#6B7280]">Usable buffer = departure₂ − arrival₁ − walking time. Low ≥60m, Moderate 20–60m, High &lt;20m. + reliability ({(selected.legs[0] as any).train.reliability}% / {(selected.legs[2] as any)?.train?.reliability ?? 0}% on-time) and station complexity. Station change adds penalty.</p>
-                          </details>
+                            <span className="font-mono text-[10px] tracking-wide text-[#5C6B80]">{(leg as any).train.days.join(" · ")}</span>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  }
-                })}
-                <div className="relative">
-                  <span className="absolute -left-[29px] -top-1 w-4 h-4 rounded-full bg-[#E85D04] grid place-items-center text-white text-[10px]">🏁</span>
-                  <div className="font-semibold">{selected.destination.city}</div>
-                  <div className="text-xs text-[#6B7280]">You&apos;ve arrived.</div>
+                      );
+                    } else {
+                      const tr = (leg as any).transfer;
+                      return (
+                        <div key={i} className="relative pb-4 -ml-10 pl-10">
+                          <div className="border-[1.5px] border-dashed border-[#1B3A5C]/30 bg-[#FAF7F0] p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-display text-[12px] tracking-wide inline-flex items-center gap-1.5">
+                                <ArrowLeftRight className="w-3.5 h-3.5" /> CHANGE AT {getStationName(tr.fromStationId).toUpperCase()}
+                              </span>
+                              <span
+                                className="inline-flex items-center gap-1 font-mono text-[11px] tracking-wide text-white px-2 py-1 shrink-0"
+                                style={{ background: RISK_COLOR[tr.risk] ?? "#1B3A5C" }}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                                {RISK_LABEL[tr.risk]?.toUpperCase() ?? tr.risk.toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                              <div className="bg-white border border-[#E8E0D1] p-2.5 text-center">
+                                <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80]">YOU HAVE</div>
+                                <div className="font-mono text-[18px] font-bold text-[#1B3A5C] leading-none mt-1">{formatDuration(tr.durationMinutes).toUpperCase()}</div>
+                                <div className="font-mono text-[11px] text-[#5C6B80] mt-1">USABLE {formatDuration(tr.usableBuffer).toUpperCase()} AFTER WALK</div>
+                              </div>
+                              <div className="bg-white border border-[#E8E0D1] p-2.5">
+                                <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80]">DO THIS</div>
+                                <ol className="font-mono text-[11px] mt-1 list-decimal pl-4 space-y-0.5 leading-4">
+                                  <li>Alight at {getStationName(tr.fromStationId)}</li>
+                                  <li>Signs → Platform {(selected.legs[i + 1] as any)?.train?.stops?.find((s: any) => s.stationId === tr.toStationId)?.platform ?? "7"}</li>
+                                  <li>Walk ~{tr.requiredWalkingMinutes} min</li>
+                                  <li>Board next train</li>
+                                </ol>
+                              </div>
+                            </div>
+                            {tr.requiresStationChange ? (
+                              <div className="mt-2 font-mono text-[11px] leading-4 bg-white border border-[#C62828]/30 p-2 flex gap-2">
+                                <OctagonAlert className="w-3.5 h-3.5 shrink-0 text-[#C62828] mt-0.5" />
+                                <span>
+                                  <strong>STATION TRANSFER:</strong> {getStationName(tr.fromStationId)} → {getStationName(tr.toStationId)} · ROAD {tr.stationChangeTransferMinutes}–
+                                  {tr.stationChangeTransferMinutes! + 5} MIN. {tr.reason}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="mt-2 font-mono text-[11px] text-[#5C6B80] flex gap-1.5">
+                                <Check className="w-3 h-3 shrink-0 mt-0.5" /> {tr.reason}
+                              </div>
+                            )}
+                            <details className="mt-2">
+                              <summary className="cursor-pointer font-mono text-[11px] tracking-wide text-[#5C6B80] hover:text-[#1B3A5C]">HOW WE CALCULATE RISK</summary>
+                              <p className="mt-1 font-mono text-[11px] leading-4 text-[#5C6B80]">
+                                Usable = dep₂ − arr₁ − walk. Low ≥60m, Moderate 20–60m, High &lt;20m. + reliability ({(selected.legs[0] as any).train.reliability}% /{" "}
+                                {(selected.legs[2] as any)?.train?.reliability ?? 0}% on-time) and station complexity. Station change adds penalty.
+                              </p>
+                            </details>
+                          </div>
+                        </div>
+                      );
+                    }
+                  })}
+                  <div className="relative">
+                    <span className="absolute -left-[28px] -top-1 w-[16px] h-[16px] bg-[#F2B705] border-[2px] border-[#1B3A5C] grid place-items-center">
+                      <Flag className="w-3 h-3 text-[#1B3A5C]" />
+                    </span>
+                    <div className="inline-block bg-[#F2B705] border border-[#1B3A5C] text-[#1B3A5C] font-display text-[12px] tracking-wide px-2 py-1 leading-none">
+                      {selected.destination.city.toUpperCase()} — YOU&apos;VE ARRIVED
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Why recommended */}
-            <div className="mt-4 bg-white rounded-2xl border border-[#F0E6D8] p-4 sm:p-5">
-              <h3 className="font-semibold flex items-center gap-2">💡 Why we recommend this</h3>
-              <ul className="mt-2 space-y-1.5">
-                {selected.reasons.map((r, i)=>(
-                  <li key={i} className="text-sm flex gap-2"><span className="text-emerald-600">✓</span><span>{r}</span></li>
+            {/* Why */}
+            <div className="mt-4 bg-white border border-[#E8E0D1] p-4 sm:p-5">
+              <h3 className="font-display text-[13px] tracking-[0.12em] flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#1B3A5C]" /> WHY WE RECOMMEND THIS
+              </h3>
+              <ul className="mt-3 space-y-1.5">
+                {selected.reasons.map((r, idx) => (
+                  <li key={idx} className="text-[13px] flex gap-2 leading-4">
+                    <Check className="w-3.5 h-3.5 shrink-0 text-[#0E9F4B] mt-0.5" />
+                    <span>{r}</span>
+                  </li>
                 ))}
               </ul>
-              {selected.whyNotFaster && <p className="mt-3 text-sm bg-[#FFFBF5] border border-[#F0E6D8] rounded-xl p-3">💬 {selected.whyNotFaster}</p>}
-              <button onClick={()=>handleExplain(selected)} className="mt-3 w-full rounded-full border border-[#E5DDD3] bg-[#FFFBF5] py-2.5 text-sm font-medium hover:bg-white">
-                {explainLoading ? "Explaining…" : "✨ Explain this journey"}
+              {selected.whyNotFaster && <p className="mt-3 font-mono text-[12px] leading-4 bg-[#FAF7F0] border border-[#E8E0D1] p-3">{selected.whyNotFaster}</p>}
+              <button
+                onClick={() => handleExplain(selected)}
+                className="mt-3 w-full border border-[#1B3A5C] bg-[#FAF7F0] py-2.5 font-mono text-[12px] tracking-wide inline-flex items-center justify-center gap-1.5 hover:bg-white"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> {explainLoading ? "EXPLAINING…" : "EXPLAIN THIS JOURNEY"}
               </button>
               {explain && (
-                <div className="mt-3 rounded-xl bg-[#1A1A1A] text-white p-4 text-sm leading-relaxed whitespace-pre-wrap">
+                <div className="mt-3 bg-[#1B3A5C] text-[#FAF7F0] p-4 font-mono text-[12px] leading-5 whitespace-pre-wrap border-l-[4px] border-[#F2B705]">
                   {explain}
-                  <div className="text-[11px] text-[#9CA3AF] mt-2">AI explanation uses structured journey data only — no invented train times.</div>
+                  <div className="font-mono text-[10px] tracking-wide text-[#FAF7F0]/60 mt-2">AI uses structured journey data only — no invented times.</div>
                 </div>
               )}
             </div>
 
-            {/* Actions */}
-            <div className="mt-4 grid gap-3">
-              <button onClick={()=>{setView("journey"); window.scrollTo({top:0, behavior:"smooth"})}} className="w-full rounded-full bg-[#1A1A1A] text-white font-semibold py-3.5 hover:bg-black">Start journey →</button>
+            <div className="mt-4 grid gap-2">
+              <button
+                onClick={() => {
+                  setView("journey");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className="w-full bg-[#F2B705] text-[#1B3A5C] border-[2px] border-[#1B3A5C] font-display text-[14px] tracking-[0.08em] py-3 flex items-center justify-center gap-2 shadow-[3px_3px_0_#1B3A5C] hover:brightness-105"
+              >
+                START JOURNEY <ArrowRight className="w-4 h-4" />
+              </button>
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={()=>saveJourney(selected)} className="rounded-full border border-[#E5DDD3] bg-white py-3 text-sm font-medium hover:bg-[#FFFBF5]">Save journey</button>
-                <button onClick={()=>{navigator.clipboard?.writeText(JSON.stringify(selected, null, 2)); setToast("Journey JSON copied"); setTimeout(()=>setToast(null),2000)}} className="rounded-full border border-[#E5DDD3] bg-white py-3 text-sm font-medium hover:bg-[#FFFBF5]">Copy journey JSON</button>
+                <button onClick={() => saveJourney(selected)} className="border border-[#E8E0D1] bg-white py-2.5 font-mono text-[12px] tracking-wide inline-flex items-center justify-center gap-1.5 hover:bg-[#FAF7F0]">
+                  <Bookmark className="w-3.5 h-3.5" /> SAVE
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard?.writeText(JSON.stringify(selected, null, 2));
+                    setToast("Journey JSON copied");
+                    setTimeout(() => setToast(null), 2000);
+                  }}
+                  className="border border-[#E8E0D1] bg-white py-2.5 font-mono text-[12px] tracking-wide inline-flex items-center justify-center gap-1.5 hover:bg-[#FAF7F0]"
+                >
+                  <Copy className="w-3.5 h-3.5" /> COPY JSON
+                </button>
               </div>
             </div>
 
-            {/* Journey API preview */}
-            <div className="mt-4 rounded-2xl bg-white border border-[#F0E6D8] p-4">
-              <div className="text-xs font-semibold tracking-widest text-[#9CA3AF] uppercase">Journey object — platform-ready</div>
-              <pre className="mt-2 text-xs bg-[#FFFBF5] border border-[#F0E6D8] rounded-xl p-3 overflow-auto">{JSON.stringify({origin:selected.origin.name, destination:selected.destination.name, date:selected.date, legs:selected.legs.map(l=> l.type==="train"?{mode:"rail", from:(l as any).from.name, to:(l as any).to.name, departure:(l as any).departure, arrival:(l as any).arrival}:{mode:"transfer", station:getStationName((l as any).transfer.fromStationId), duration_minutes:(l as any).transfer.durationMinutes, risk:(l as any).transfer.risk})}, null, 2)}</pre>
-              <p className="text-xs text-[#9CA3AF] mt-2">Future: rail → metro → bus → last-mile from one journey object.</p>
+            <div className="mt-4 bg-white border border-[#E8E0D1] p-4">
+              <div className="font-display text-[11px] tracking-[0.16em] text-[#5C6B80]">JOURNEY OBJECT — PLATFORM-READY</div>
+              <pre className="mt-2 font-mono text-[11px] bg-[#FAF7F0] border border-[#E8E0D1] p-3 overflow-auto leading-4">
+                {JSON.stringify(
+                  {
+                    origin: selected.origin.name,
+                    destination: selected.destination.name,
+                    date: selected.date,
+                    legs: selected.legs.map((l) =>
+                      l.type === "train"
+                        ? { mode: "rail", from: (l as any).from.name, to: (l as any).to.name, departure: (l as any).departure, arrival: (l as any).arrival }
+                        : { mode: "transfer", station: getStationName((l as any).transfer.fromStationId), duration_minutes: (l as any).transfer.durationMinutes, risk: (l as any).transfer.risk }
+                    ),
+                  },
+                  null,
+                  2
+                )}
+              </pre>
+              <p className="font-mono text-[11px] text-[#5C6B80] mt-2">FUTURE: RAIL → METRO → BUS → LAST-MILE FROM ONE OBJECT.</p>
             </div>
 
-            {/* Mock booking */}
-            <div className="mt-4 rounded-2xl bg-[#FFF4E6] border border-[#F0E6D8] p-4 text-center">
-              <div className="font-semibold">Ready to book?</div>
-              <p className="text-sm text-[#6B7280] mt-1">Raasta has planned your journey. Ticket booking would happen through the appropriate railway booking service.</p>
-              <button onClick={()=>{setToast("Booking is mocked — no real IRCTC transaction."); setTimeout(()=>setToast(null),3000)}} className="mt-3 rounded-full bg-white border border-[#E5DDD3] px-5 py-2.5 text-sm font-medium hover:bg-[#FFFBF5]">Continue to booking →</button>
-              <p className="text-[11px] text-[#9CA3AF] mt-2">Booking is mocked in this prototype. No real payment or railway transaction occurs.</p>
+            <div className="mt-4 border border-[#E8E0D1] bg-[#FAF7F0] p-4 text-center">
+              <div className="font-display text-[14px] tracking-wide">READY TO BOOK?</div>
+              <p className="text-[13px] text-[#5C6B80] mt-1 leading-4">Raasta has planned your journey. Booking happens via the railway booking service.</p>
+              <button
+                onClick={() => {
+                  setToast("Booking is mocked — no real IRCTC transaction.");
+                  setTimeout(() => setToast(null), 3000);
+                }}
+                className="mt-3 border border-[#1B3A5C] bg-white px-5 py-2 font-mono text-[12px] tracking-wide inline-flex items-center gap-1.5 hover:bg-[#FAF7F0]"
+              >
+                CONTINUE TO BOOKING <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+              <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] mt-2">MOCKED — NO REAL PAYMENT OR TRANSACTION.</p>
             </div>
           </div>
         )}
 
         {/* JOURNEY MODE */}
-        {view==="journey" && selected && (
-          <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-6 pb-10">
-            <button onClick={()=>setView("detail")} className="text-sm text-[#6B7280] hover:text-black mb-3">← Back to details</button>
+        {view === "journey" && selected && (
+          <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-6 pb-8">
+            <button onClick={() => setView("detail")} className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] hover:text-[#1B3A5C] mb-3">
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" /> BACK TO DETAILS
+            </button>
 
-            <div className="rounded-2xl bg-[#1A1A1A] text-white p-5">
-              <div className="text-xs tracking-widest text-[#9CA3AF] uppercase">Journey mode</div>
-              <h2 className="text-xl font-bold mt-1">You&apos;re on your way</h2>
-              <p className="text-sm text-[#9CA3AF]">We&apos;ll guide you step by step.</p>
+            <div className="bg-[#1B3A5C] text-[#FAF7F0] p-5 border-l-[6px] border-[#F2B705]">
+              <div className="font-mono text-[11px] tracking-[0.16em] text-[#FAF7F0]/70">JOURNEY MODE</div>
+              <h2 className="font-display text-[22px] leading-none mt-1">YOU&apos;RE ON YOUR WAY</h2>
+              <p className="font-mono text-[12px] text-[#FAF7F0]/70 mt-1">We&apos;ll guide you step by step.</p>
             </div>
 
-            {/* Next step */}
-            <div className="mt-4 bg-white rounded-2xl border border-[#F0E6D8] p-4">
-              <div className="text-xs font-semibold tracking-widest text-[#9CA3AF] uppercase">Your next step</div>
+            <div className="mt-4 bg-white border border-[#E8E0D1] p-4">
+              <div className="font-display text-[11px] tracking-[0.16em] text-[#5C6B80]">YOUR NEXT STEP</div>
               <div className="mt-2 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-[#FFF4E6] border border-[#F0E6D8] grid place-items-center">🚆</div>
+                <div className="w-9 h-9 bg-[#FAF7F0] border border-[#E8E0D1] grid place-items-center shrink-0">
+                  <TrainFront className="w-4 h-4 text-[#1B3A5C]" />
+                </div>
                 <div>
-                  <div className="font-semibold">Take {(selected.legs[0] as any).train.number} — {(selected.legs[0] as any).train.name}</div>
-                  <div className="text-sm text-[#6B7280]">{(selected.legs[0] as any).from.name} → {(selected.legs[0] as any).to.name} · Dep {(selected.legs[0] as any).departure}</div>
+                  <div className="font-display text-[13px] tracking-wide">
+                    TAKE {(selected.legs[0] as any).train.number} — {(selected.legs[0] as any).train.name.toUpperCase()}
+                  </div>
+                  <div className="font-mono text-[12px] text-[#5C6B80]">
+                    {(selected.legs[0] as any).from.name.toUpperCase()} → {(selected.legs[0] as any).to.name.toUpperCase()} · DEP {(selected.legs[0] as any).departure}
+                  </div>
                 </div>
               </div>
-              <div className="mt-3 rounded-xl bg-[#FFFBF5] border border-[#F0E6D8] p-3 text-sm">
-                We&apos;ll tell you what to do when you arrive at { (selected.legs[0] as any).to.name}.
-              </div>
+              <div className="mt-3 border border-[#E8E0D1] bg-[#FAF7F0] p-3 font-mono text-[12px] leading-4">We&apos;ll tell you what to do when you arrive at {(selected.legs[0] as any).to.name.toUpperCase()}.</div>
             </div>
 
-            {/* Journey progress */}
-            <div className="mt-4 bg-white rounded-2xl border border-[#F0E6D8] p-4">
-              <div className="font-semibold text-sm">After you arrive — Change trains</div>
-              <div className="text-xs text-[#6B7280]">Platform {(selected.legs[0] as any).train.stops.find((s:any)=>s.stationId===(selected.legs[0] as any).to.id)?.platform ?? "4"} → {(selected.legs[2] as any)?.train?.stops.find((s:any)=>s.stationId===(selected.legs[1] as any)?.transfer.toStationId)?.platform ?? "7"} · Walk ~{(selected.legs[1] as any).transfer.requiredWalkingMinutes} min</div>
+            <div className="mt-4 bg-white border border-[#E8E0D1] p-4">
+              <div className="font-display text-[12px] tracking-wide">AFTER YOU ARRIVE — CHANGE TRAINS</div>
+              <div className="font-mono text-[11px] text-[#5C6B80] mt-1">
+                PLATFORM {(selected.legs[0] as any).train.stops.find((s: any) => s.stationId === (selected.legs[0] as any).to.id)?.platform ?? "4"} →{" "}
+                {(selected.legs[2] as any)?.train?.stops.find((s: any) => s.stationId === (selected.legs[1] as any)?.transfer.toStationId)?.platform ?? "7"} · WALK ~
+                {(selected.legs[1] as any).transfer.requiredWalkingMinutes} MIN
+              </div>
               <div className="mt-3 flex items-center gap-2">
-                <span className="text-sm">Connection:</span>
-                <span className="font-semibold">{formatDuration((selected.legs[1] as any).transfer.durationMinutes)}</span>
-                <span className={`ml-auto text-xs px-2 py-1 rounded-full border ${delay===0?"bg-emerald-50 border-emerald-200 text-emerald-700" : delay < 40 ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-red-50 border-red-200 text-red-700"}`}>
-                  {delay===0 ? "🟢 You're on track" : delay < 40 ? "🟡 Moderate delay" : "🔴 Connection at risk"}
+                <span className="font-mono text-[12px]">CONNECTION:</span>
+                <span className="font-mono text-[13px] font-semibold">{formatDuration((selected.legs[1] as any).transfer.durationMinutes).toUpperCase()}</span>
+                <span
+                  className="ml-auto font-mono text-[11px] tracking-wide text-white px-2 py-1 inline-flex items-center gap-1"
+                  style={{ background: delay === 0 ? RISK_COLOR.low : delay < 40 ? RISK_COLOR.medium : RISK_COLOR.high }}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-white" /> {delay === 0 ? "ON TRACK" : delay < 40 ? "MODERATE DELAY" : "AT RISK"}
                 </span>
               </div>
-              {delay>0 && (
-                <div className="mt-2 text-sm">
-                  Original buffer: {formatDuration((selected.legs[1] as any).transfer.durationMinutes)} → now <strong>{formatDuration(Math.max(0,(selected.legs[1] as any).transfer.durationMinutes - delay))}</strong> after {delay} min delay
+              {delay > 0 && (
+                <div className="mt-2 font-mono text-[12px]">
+                  ORIGINAL {formatDuration((selected.legs[1] as any).transfer.durationMinutes).toUpperCase()} → NOW{" "}
+                  <strong>{formatDuration(Math.max(0, (selected.legs[1] as any).transfer.durationMinutes - delay)).toUpperCase()}</strong> AFTER {delay}M DELAY
                 </div>
               )}
             </div>
 
-            {/* Delay simulation */}
-            <div className="mt-4 rounded-2xl border-2 border-dashed border-[#E85D04]/30 bg-[#FFF4E6] p-4">
-              <div className="text-xs font-semibold tracking-widest text-[#E85D04] uppercase">Prototype controls</div>
-              <p className="text-xs text-[#7A5A2A] mt-1">Demo only — simulates a delay on your first train.</p>
+            <div className="mt-4 border-[1.5px] border-dashed border-[#1B3A5C]/30 bg-[#FAF7F0] p-4">
+              <div className="font-display text-[11px] tracking-[0.16em] text-[#1B3A5C]">PROTOTYPE CONTROLS — DEMO ONLY</div>
+              <p className="font-mono text-[11px] text-[#5C6B80] mt-1">Simulates a delay on your first train.</p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <button onClick={()=>setDelay(0)} className={`px-4 py-2 rounded-full text-sm font-medium border ${delay===0?"bg-[#1A1A1A] text-white border-[#1A1A1A]":"bg-white border-[#E5DDD3] hover:bg-white"}`}>Reset</button>
-                <button onClick={()=>setDelay(35)} className={`px-4 py-2 rounded-full text-sm font-medium border ${delay===35?"bg-[#E85D04] text-white border-[#E85D04]":"bg-white border-[#E5DDD3]"}`}>Simulate 35m delay</button>
-                <button onClick={()=>setDelay(70)} className={`px-4 py-2 rounded-full text-sm font-medium border ${delay===70?"bg-[#E85D04] text-white border-[#E85D04]":"bg-white border-[#E5DDD3]"}`}>Simulate 70m delay</button>
-                <button onClick={()=>setDelay(110)} className={`px-4 py-2 rounded-full text-sm font-medium border ${delay===110?"bg-[#E85D04] text-white border-[#E85D04]":"bg-white border-[#E5DDD3]"}`}>Simulate 110m delay</button>
+                {[
+                  ["Reset", 0],
+                  ["35M delay", 35],
+                  ["70M delay", 70],
+                  ["110M delay", 110],
+                ].map(([label, v]: any) => (
+                  <button
+                    key={label}
+                    onClick={() => setDelay(v)}
+                    className={`px-3 py-1.5 font-mono text-[11px] tracking-wide border ${delay === v ? "bg-[#1B3A5C] text-white border-[#1B3A5C]" : "bg-white border-[#E8E0D1] hover:border-[#1B3A5C] text-[#1B3A5C]"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
               {delay >= 35 && (
-                <div className="mt-4 rounded-xl bg-white border border-amber-200 p-4">
-                  <div className="font-semibold text-amber-800 flex gap-2">⚠️ Your connection is at risk</div>
-                  <p className="text-sm text-[#6B7280] mt-1">
-                    Your first train is running approximately <strong>{delay} minutes</strong> late.
+                <div className="mt-4 bg-white border border-[#E8E0D1] p-4">
+                  <div className="font-display text-[13px] tracking-wide flex gap-2 text-[#C62828]">
+                    <OctagonAlert className="w-4 h-4 shrink-0" /> YOUR CONNECTION IS AT RISK
+                  </div>
+                  <p className="font-mono text-[12px] text-[#5C6B80] mt-1 leading-4">
+                    Your first train is running approximately <strong className="text-[#1B3A5C]">{delay} minutes</strong> late.
                   </p>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                    <div className="rounded-lg bg-[#FFFBF5] border border-[#F0E6D8] p-2 text-center">
-                      <div className="text-xs text-[#9CA3AF]">Original</div>
-                      <div className="font-semibold">{formatDuration((selected.legs[1] as any).transfer.durationMinutes)}</div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2 text-center">
+                      <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80]">ORIGINAL</div>
+                      <div className="font-mono text-[13px] font-semibold text-[#1B3A5C]">{formatDuration((selected.legs[1] as any).transfer.durationMinutes).toUpperCase()}</div>
                     </div>
-                    <div className="rounded-lg bg-amber-50 border border-amber-200 p-2 text-center">
-                      <div className="text-xs text-[#9CA3AF]">Now</div>
-                      <div className="font-semibold">{formatDuration(Math.max(0,(selected.legs[1] as any).transfer.durationMinutes - delay))}</div>
+                    <div className="border p-2 text-center text-white" style={{ background: delay < 40 ? RISK_COLOR.medium : RISK_COLOR.high }}>
+                      <div className="font-mono text-[10px] tracking-[0.12em] opacity-80">NOW</div>
+                      <div className="font-mono text-[13px] font-semibold">{formatDuration(Math.max(0, (selected.legs[1] as any).transfer.durationMinutes - delay)).toUpperCase()}</div>
                     </div>
                   </div>
-                  <p className="text-xs text-[#6B7280] mt-2">Your original connection may still be possible, but we recommend a later train for recovery time.</p>
+                  <p className="font-mono text-[11px] text-[#5C6B80] mt-2 leading-4">Your original connection may still be possible, but we recommend a later train for recovery.</p>
 
-                  {recovery.length>0 ? (
+                  {recovery.length > 0 ? (
                     <div className="mt-3">
-                      <div className="font-semibold text-sm">We found a safer option</div>
+                      <div className="font-display text-[12px] tracking-wide">WE FOUND A SAFER OPTION</div>
                       <div className="mt-2 space-y-2">
-                        {recovery.map((r, idx)=>(
-                          <button key={idx} onClick={()=>setRecoverSelected(r.journey.id)} className={`w-full text-left rounded-xl border p-3 flex items-center justify-between ${recoverSelected===r.journey.id?"border-[#1A1A1A] bg-[#FFFBF5]":"border-[#F0E6D8] bg-white hover:bg-[#FFFBF5]"}`}>
+                        {recovery.map((r, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => setRecoverSelected(r.journey.id)}
+                            className={`w-full text-left border p-3 flex items-center justify-between ${recoverSelected === r.journey.id ? "border-[#1B3A5C] bg-[#FAF7F0]" : "border-[#E8E0D1] bg-white hover:bg-[#FAF7F0]"}`}
+                          >
                             <div>
-                              <div className="font-semibold text-sm">{(r.journey.legs[2] as any).train.number} · {(r.journey.legs[2] as any).train.name}</div>
-                              <div className="text-xs text-[#6B7280]">Dep {(r.journey.legs[2] as any).departure} · {formatDuration(r.buffer)} buffer · 🟢 {r.risk}</div>
+                              <div className="font-mono text-[12px] font-semibold text-[#1B3A5C]">{(r.journey.legs[2] as any).train.number} · {(r.journey.legs[2] as any).train.name.toUpperCase()}</div>
+                              <div className="font-mono text-[11px] text-[#5C6B80]">DEP {(r.journey.legs[2] as any).departure} · {formatDuration(r.buffer).toUpperCase()} BUFFER</div>
                             </div>
-                            <span className="text-xs px-2 py-1 rounded-full bg-[#1A1A1A] text-white">{idx===0 ? "Recommended" : idx===1 ? "Faster but risky" : "Wait longer"}</span>
+                            <span className="font-mono text-[10px] tracking-wide bg-[#1B3A5C] text-white px-2 py-1">{idx === 0 ? "RECOMMENDED" : idx === 1 ? "Faster but risky" : "Wait longer"}</span>
                           </button>
                         ))}
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2">
-                        <button onClick={()=>{if(recoverSelected){ const rec = recovery.find(r=>r.journey.id===recoverSelected)?.journey; if(rec){ setSelected(rec); setDelay(0); setRecoverSelected(null); setToast("Journey updated to recovery option"); setTimeout(()=>setToast(null),2500);} }}} className="rounded-full bg-[#1A1A1A] text-white py-2.5 text-sm font-medium">Use recovery option</button>
-                        <button onClick={()=>setDelay(0)} className="rounded-full border border-[#E5DDD3] bg-white py-2.5 text-sm font-medium">Keep current plan</button>
+                        <button
+                          onClick={() => {
+                            if (recoverSelected) {
+                              const rec = recovery.find((r) => r.journey.id === recoverSelected)?.journey;
+                              if (rec) {
+                                setSelected(rec);
+                                setDelay(0);
+                                setRecoverSelected(null);
+                                setToast("Journey updated to recovery option");
+                                setTimeout(() => setToast(null), 2500);
+                              }
+                            }
+                          }}
+                          className="bg-[#1B3A5C] text-white py-2.5 font-mono text-[11px] tracking-wide"
+                        >
+                          USE RECOVERY
+                        </button>
+                        <button onClick={() => setDelay(0)} className="border border-[#E8E0D1] bg-white py-2.5 font-mono text-[11px] tracking-wide">
+                          KEEP PLAN
+                        </button>
                       </div>
                     </div>
                   ) : (
-                    <p className="text-sm text-red-600 mt-3">No alternative same-day trains with safe buffer — consider next-day options or different date.</p>
+                    <p className="font-mono text-[12px] text-[#C62828] mt-3">No alternative same-day trains with safe buffer — consider next-day options.</p>
                   )}
                 </div>
               )}
             </div>
 
-            {/* Last mile */}
-            <div className="mt-4 bg-white rounded-2xl border border-[#F0E6D8] p-4">
-              <div className="text-sm font-semibold">You&apos;ve reached Madgaon.</div>
-              <div className="text-sm font-bold">Continue your journey</div>
-              <p className="text-xs text-[#9CA3AF]">Future integration concept — not live APIs</p>
+            <div className="mt-4 bg-white border border-[#E8E0D1] p-4">
+              <div className="font-display text-[12px] tracking-wide">YOU&apos;VE REACHED MADGAON.</div>
+              <div className="font-display text-[14px] tracking-wide">CONTINUE YOUR JOURNEY</div>
+              <p className="font-mono text-[11px] text-[#5C6B80]">FUTURE INTEGRATION CONCEPT — NOT LIVE APIS</p>
               <div className="mt-3 grid sm:grid-cols-3 gap-2">
-                <div className="rounded-xl border border-[#F0E6D8] p-3">
-                  <div className="text-sm font-semibold">🚕 Ride</div><div className="text-xs text-[#6B7280]">Connect to mobility provider · 8–12 min to city</div><button onClick={()=>setToast("Mock ride integration — concept only")} className="mt-2 text-xs font-medium text-[#E85D04]">Explore →</button>
-                </div>
-                <div className="rounded-xl border border-[#F0E6D8] p-3">
-                  <div className="text-sm font-semibold">🚌 Local transport</div><div className="text-xs text-[#6B7280]">Find nearby public transport</div><button onClick={()=>setToast("Mock bus integration — concept only")} className="mt-2 text-xs font-medium text-[#E85D04]">Explore →</button>
-                </div>
-                <div className="rounded-xl border border-[#F0E6D8] p-3">
-                  <div className="text-sm font-semibold">📍 Navigate</div><div className="text-xs text-[#6B7280]">Continue to your destination</div><button onClick={()=>setToast("Mock navigation — concept only")} className="mt-2 text-xs font-medium text-[#E85D04]">Navigate →</button>
-                </div>
+                {[
+                  [CarFront, "RIDE", "Mobility provider · 8–12 min to city"],
+                  [Bus, "LOCAL", "Find nearby public transport"],
+                  [Navigation, "NAVIGATE", "Continue to destination"],
+                ].map(([Icon, label, desc]: any) => (
+                  <div key={label} className="border border-[#E8E0D1] bg-[#FAF7F0] p-3">
+                    <div className="font-display text-[11px] tracking-wide flex items-center gap-1.5">
+                      <Icon className="w-3.5 h-3.5" /> {label}
+                    </div>
+                    <div className="font-mono text-[11px] text-[#5C6B80] mt-1 leading-4">{desc}</div>
+                    <button
+                      onClick={() => {
+                        setToast("Mock integration — concept only");
+                        setTimeout(() => setToast(null), 2000);
+                      }}
+                      className="mt-2 font-mono text-[11px] tracking-wide underline decoration-[#F2B705] decoration-2 underline-offset-4"
+                    >
+                      Explore →
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
 
             <div className="mt-4 text-center">
-              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 border border-emerald-200 text-sm text-emerald-800">🏁 Journey complete · {selected.legs.filter(l=>l.type==="train").length} trains · {selected.interchangeCount} interchange</div>
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-[#E8E0D1] font-mono text-[11px] tracking-wide">
+                <Flag className="w-3 h-3" /> JOURNEY COMPLETE · {selected.legs.filter((l) => l.type === "train").length} TRAINS · {selected.interchangeCount} INTERCHANGE
+              </div>
               <div className="mt-3 flex justify-center gap-2">
-                <button onClick={()=>saveJourney(selected)} className="rounded-full border border-[#E5DDD3] bg-white px-5 py-2 text-sm">Save journey</button>
-                <button onClick={()=>{setView("results"); setDelay(0)}} className="rounded-full bg-[#1A1A1A] text-white px-5 py-2 text-sm">Plan another</button>
+                <button onClick={() => saveJourney(selected)} className="border border-[#E8E0D1] bg-white px-5 py-2 font-mono text-[11px] tracking-wide">
+                  SAVE JOURNEY
+                </button>
+                <button
+                  onClick={() => {
+                    setView("results");
+                    setDelay(0);
+                  }}
+                  className="bg-[#1B3A5C] text-white px-5 py-2 font-mono text-[11px] tracking-wide"
+                >
+                  PLAN ANOTHER
+                </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Saved journeys drawer */}
+        {/* Saved drawer */}
         {showSaved && (
           <div className="fixed inset-0 z-50 flex justify-end">
-            <div onClick={()=>setShowSaved(false)} className="flex-1 bg-black/30 backdrop-blur-sm" />
-            <div className="w-full max-w-[420px] bg-[#FFFBF5] h-full overflow-auto border-l border-[#F0E6D8] shadow-2xl">
-              <div className="sticky top-0 bg-[#FFFBF5] border-b border-[#F0E6D8] p-4 flex items-center justify-between">
-                <h3 className="font-semibold">Saved journeys</h3>
-                <button onClick={()=>setShowSaved(false)} className="w-8 h-8 rounded-full bg-white border border-[#E5DDD3] grid place-items-center">✕</button>
+            <div onClick={() => setShowSaved(false)} className="flex-1 bg-[#1B3A5C]/40 backdrop-blur-[1px]" />
+            <div className="w-full max-w-[400px] bg-[#FAF7F0] h-full overflow-auto border-l-[3px] border-[#1B3A5C]">
+              <div className="sticky top-0 bg-[#1B3A5C] text-[#FAF7F0] p-4 flex items-center justify-between">
+                <h3 className="font-display text-[13px] tracking-[0.12em]">SAVED JOURNEYS</h3>
+                <button onClick={() => setShowSaved(false)} className="w-7 h-7 bg-[#FAF7F0] text-[#1B3A5C] grid place-items-center">
+                  <X className="w-4 h-4" />
+                </button>
               </div>
               <div className="p-4">
-                {saved.length===0 ? (
-                  <div className="text-center py-10">
-                    <div className="text-4xl mb-3">🗺️</div>
-                    <div className="font-semibold">No saved journeys yet</div>
-                    <p className="text-sm text-[#6B7280] mt-1">Plan a journey and save it here for later.</p>
-                    <button onClick={()=>setShowSaved(false)} className="mt-4 rounded-full bg-[#1A1A1A] text-white px-5 py-2 text-sm">Plan a journey</button>
+                {saved.length === 0 ? (
+                  <div className="text-center py-10 border border-dashed border-[#E8E0D1] bg-white p-6">
+                    <Route className="w-6 h-6 mx-auto text-[#5C6B80]" />
+                    <div className="font-display text-[13px] tracking-wide mt-2">NO SAVED JOURNEYS</div>
+                    <p className="font-mono text-[12px] text-[#5C6B80] mt-1">Plan a journey and save it here.</p>
+                    <button onClick={() => setShowSaved(false)} className="mt-4 bg-[#F2B705] text-[#1B3A5C] border border-[#1B3A5C] px-4 py-2 font-mono text-[11px] tracking-wide">
+                      PLAN A JOURNEY
+                    </button>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {saved.map(j=>(
-                      <div key={j.id} className="bg-white rounded-2xl border border-[#F0E6D8] p-4">
-                        <div className="font-semibold text-sm">{j.origin.name} → {j.destination.city}</div>
-                        <div className="text-xs text-[#6B7280]">{formatDate(j.date)} · {formatDuration(j.totalDurationMinutes)} · ₹{j.totalCost.toLocaleString("en-IN")}</div>
-                        <div className="text-xs mt-1">{j.legs.filter(l=>l.type==="train").length} trains · {j.interchangeCount} interchange · {j.riskLevel} risk</div>
+                    {saved.map((j) => (
+                      <div key={j.id} className="bg-white border border-[#E8E0D1] p-3">
+                        <div className="font-display text-[12px] tracking-wide">
+                          {j.origin.name.toUpperCase()} → {j.destination.city.toUpperCase()}
+                        </div>
+                        <div className="font-mono text-[11px] text-[#5C6B80] mt-1">
+                          {formatDate(j.date).toUpperCase()} · {formatDuration(j.totalDurationMinutes).toUpperCase()} · ₹{j.totalCost.toLocaleString("en-IN")}
+                        </div>
+                        <div className="font-mono text-[11px] text-[#5C6B80]">{j.legs.filter((l) => l.type === "train").length} TRAINS · {j.interchangeCount} INTERCHANGE</div>
                         <div className="mt-3 flex gap-2">
-                          <button onClick={()=>{setSelected(j); setView("detail"); setShowSaved(false); window.scrollTo({top:0, behavior:"smooth"})}} className="flex-1 rounded-full bg-[#1A1A1A] text-white py-2 text-sm">Open</button>
-                          <button onClick={()=>setSaved(prev=>prev.filter(s=>s.id!==j.id))} className="px-4 rounded-full border border-[#E5DDD3] bg-white text-sm">Remove</button>
+                          <button
+                            onClick={() => {
+                              setSelected(j);
+                              setView("detail");
+                              setShowSaved(false);
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
+                            className="flex-1 bg-[#1B3A5C] text-white py-2 font-mono text-[11px] tracking-wide"
+                          >
+                            OPEN
+                          </button>
+                          <button onClick={() => setSaved((prev) => prev.filter((s) => s.id !== j.id))} className="px-3 border border-[#E8E0D1] bg-white font-mono text-[11px] tracking-wide">
+                            REMOVE
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -738,25 +1171,25 @@ export default function Home() {
           </div>
         )}
 
-        {toast && (
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#1A1A1A] text-white text-sm px-4 py-2.5 rounded-full shadow-xl z-50">
-            {toast}
-          </div>
-        )}
+        {toast && <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#1B3A5C] text-white font-mono text-[12px] tracking-wide px-4 py-2 border border-[#F2B705] z-50">{toast}</div>}
       </main>
 
-      <footer className="border-t border-[#F0E6D8] bg-white mt-auto">
+      <footer className="border-t-[3px] border-[#1B3A5C] bg-white mt-auto">
         <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-6">
-          <div className="flex flex-col sm:flex-row gap-4 justify-between text-xs text-[#6B7280]">
-            <div className="max-w-[620px]">
-              <div className="font-semibold text-[#1A1A1A]">Prototype information</div>
-              <p className="mt-1">Raasta is an independent prototype and is not an official Indian Railways or government product. Train schedules, fares, delay information and availability shown are synthetic and used only for demonstration. No real passenger information, payment details, OTPs or government systems are used.</p>
-              <p className="mt-2">OpenAI is used as an explanation layer to convert structured journey data into simple language. The model does not invent train information. Fallback explanations are deterministic.</p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-between">
+            <div className="max-w-[600px]">
+              <div className="font-display text-[12px] tracking-[0.12em] text-[#1B3A5C]">PROTOTYPE INFORMATION</div>
+              <p className="font-mono text-[11px] leading-4 text-[#5C6B80] mt-2">
+                Raasta is an independent prototype and is not an official Indian Railways or government product. Train schedules, fares, delay information and availability shown are synthetic and used only for demonstration. No real passenger information, payment details, OTPs or government systems are used.
+              </p>
+              <p className="font-mono text-[11px] leading-4 text-[#5C6B80] mt-2">
+                OpenAI is used as an explanation layer to convert structured journey data into simple language. The model does not invent train information. Fallback explanations are deterministic.
+              </p>
             </div>
-            <div className="sm:text-right">
-              <div className="font-medium text-[#1A1A1A]">Built for hackathon</div>
-              <div>Plan the journey, not the train.</div>
-              <div className="mt-1">Synthetic data · Mock booking · Future mobility concepts</div>
+            <div className="sm:text-right font-mono text-[11px] leading-4 text-[#5C6B80]">
+              <div className="font-display text-[11px] tracking-[0.12em] text-[#1B3A5C]">BUILT FOR HACKATHON</div>
+              <div className="mt-1">PLAN THE JOURNEY, NOT THE TRAIN.</div>
+              <div className="mt-1">SYNTHETIC DATA · MOCK BOOKING · FUTURE MOBILITY CONCEPTS</div>
             </div>
           </div>
         </div>
@@ -765,16 +1198,6 @@ export default function Home() {
   );
 }
 
-function RiskBadge({ risk }: { risk: string }) {
-  const map: Record<string, { bg: string; text: string; dot: string }> = {
-    low: { bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-700", dot: "bg-emerald-500" },
-    medium: { bg: "bg-amber-50 border-amber-200", text: "text-amber-700", dot: "bg-amber-500" },
-    high: { bg: "bg-red-50 border-red-200", text: "text-red-700", dot: "bg-red-500" },
-  };
-  const m = map[risk] ?? map.low;
-  const label = risk === "low" ? "Low risk" : risk === "medium" ? "Moderate risk" : risk === "high" ? "High risk" : risk;
-  return <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${m.bg} ${m.text} font-medium`}><span className={`w-2 h-2 rounded-full ${m.dot}`} /> {label}</span>;
-}
 function getStationName(id: string) {
-  return stations.find(s=>s.id===id)?.name ?? id;
+  return stations.find((s) => s.id === id)?.name ?? id;
 }

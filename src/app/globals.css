@@ -1,29 +1,71 @@
 @import "tailwindcss";
 
 :root {
-  --background: #FFFBF5;
-  --foreground: #1A1A1A;
-  --accent: #E85D04;
-  --accent-soft: #FFF4E6;
-  --muted: #6B7280;
-  --border: #F0E6D8;
+  --background: #FAF7F0;
+  --foreground: #1B3A5C;
+  --accent: #F2B705;
+  --accent-ink: #1B3A5C;
+  --border: #E8E0D1;
+  --border-strong: #D6CCB6;
+  --muted: #5C6B80;
+  --surface: #FFFFFF;
+  --rail: #1B3A5C;
+  --risk-low: #0E9F4B;
+  --risk-mid: #D98200;
+  --risk-high: #C62828;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #D6CCB6 transparent;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-body), system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #E5DDD3 transparent;
+/* Type scale */
+.font-display {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  line-height: 0.95;
+}
+.font-mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+/* Ticket paper texture subtle */
+.bg-paper {
+  background-color: #FAF7F0;
+  background-image:
+    radial-gradient(ellipse at 20% 10%, rgba(242,183,5,0.06) 0%, transparent 55%),
+    radial-gradient(ellipse at 90% 90%, rgba(27,58,92,0.04) 0%, transparent 50%);
+}
+
+/* Railway board header stripe */
+.rail-stripe {
+  height: 4px;
+  background: repeating-linear-gradient(
+    90deg,
+    #F2B705 0 28px,
+    #1B3A5C 28px 56px
+  );
 }
