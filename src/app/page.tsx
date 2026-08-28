@@ -1,8 +1,9 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { stations } from "@/data/stations";
+import { stations, getStation, getStationName } from "@/data/stations";
 import { Journey, Preference } from "@/lib/types";
 import { findJourneys, formatDuration, getRecoveryOptions } from "@/lib/engine";
+import { StationSelector } from "@/components/StationSelector";
 import {
   TrainFront,
   ArrowLeftRight,
@@ -32,8 +33,100 @@ import {
   Route,
   ArrowUpDown,
   ChevronRight,
+  ChevronLeft,
   X,
 } from "lucide-react";
+
+const CAROUSEL_SLIDES = [
+  {
+    id: 0,
+    tag: "INTERCHANGE INTELLIGENCE",
+    title: "Airport-Style Connecting Trains",
+    subtitle: "Direct trains full? Connect seamlessly at major junction hubs.",
+    icon: Route,
+    accent: "#F2B705",
+    badge: "100% PRACTICAL & LEGAL",
+    desc: "When direct trains are waitlisted (WL), Raasta links two trains across major junctions (Mumbai, Bhopal, Vadodara, Nagpur) with protected connection buffers.",
+    points: [
+      "Finds confirmed seat combinations when direct trains are sold out",
+      "Calculates safe layovers (2h to 6h) so you never miss a connection",
+      "Same-station and cross-terminal options clearly marked",
+    ],
+    demo: {
+      type: "layover",
+      t1: "12952 Rajdhani (NDLS → MMCT)",
+      t1Time: "16:55 → 06:55",
+      layover: "2h 35m Protected Change at Mumbai Central",
+      t2: "10104 Mandovi Exp (MMCT → MAO)",
+      t2Time: "09:30 → 17:20",
+    },
+  },
+  {
+    id: 1,
+    tag: "RISK & SAFETY ENGINE",
+    title: "Buffer & Missed-Connection Scoring",
+    subtitle: "Never sprint across platforms in panic.",
+    icon: ShieldCheck,
+    accent: "#0E9F4B",
+    badge: "HISTORICAL DELAY AWARE",
+    desc: "Unlike standard IRCTC timetable searches, our algorithm factors platform walking times, luggage transfer delays, and historical train delay data.",
+    points: [
+      "LOW RISK: > 80m buffer — plenty of margin for families & luggage",
+      "MODERATE RISK: 35m - 80m buffer — viable for agile travellers",
+      "HIGH RISK: < 35m buffer — flagged with caution alerts",
+    ],
+    demo: {
+      type: "risk",
+      bars: [
+        { label: "LOW RISK (SAFE)", buffer: "> 80m", color: "#0E9F4B", note: "Family & luggage friendly" },
+        { label: "MODERATE", buffer: "35m - 80m", color: "#D98200", note: "Tight on delayed routes" },
+        { label: "HIGH RISK", buffer: "< 35m", color: "#C62828", note: "Not recommended" },
+      ],
+    },
+  },
+  {
+    id: 2,
+    tag: "METRO HUB INTELLIGENCE",
+    title: "Same-City Cross-Station Awareness",
+    subtitle: "Smart navigation between city terminals.",
+    icon: MapPin,
+    accent: "#1B3A5C",
+    badge: "CITY TRANSIT BUFFER",
+    desc: "Metros have multiple major railway stations. Raasta knows when you arrive at Mumbai Central (MMCT) and need to depart from Dadar (DDR), adding realistic road transit times.",
+    points: [
+      "Mumbai: MMCT ↔ Dadar ↔ CSMT ↔ Bandra Terminus",
+      "Delhi: NDLS ↔ Nizamuddin (NZM) ↔ Old Delhi (DLI) ↔ Anand Vihar (ANVT)",
+      "Kolkata: Howrah (HWH) ↔ Sealdah (SDAH) road transit",
+    ],
+    demo: {
+      type: "metro",
+      routes: [
+        { from: "MMCT", to: "Dadar (DDR)", road: "20 min cab / local transit buffer included" },
+        { from: "NDLS", to: "Nizamuddin (NZM)", road: "25 min road transit buffer included" },
+      ],
+    },
+  },
+  {
+    id: 3,
+    tag: "RESILIENCE & RECOVERY",
+    title: "1-Click Delay Recovery Simulator",
+    subtitle: "First train delayed? Instant Plan B.",
+    icon: Zap,
+    accent: "#E65100",
+    badge: "INSTANT ALTERNATIVES",
+    desc: "If your incoming train faces an unexpected delay (+35m, +70m), Raasta's delay simulator instantly recalculates your connection and presents backup trains.",
+    points: [
+      "Simulate delay scenarios before or during your trip",
+      "Instantly discover later departing trains with viable connection buffers",
+      "Travel with confidence knowing your alternative route options",
+    ],
+    demo: {
+      type: "simulator",
+      delay: "+70m delay simulated on Train 1",
+      result: "2 backup trains available departing 1h 40m later",
+    },
+  },
+];
 
 function todayISO() {
   const d = new Date();
@@ -85,8 +178,22 @@ export default function Home() {
   const [explainLoading, setExplainLoading] = useState(false);
   const [recoverSelected, setRecoverSelected] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [fromOpen, setFromOpen] = useState(false);
-  const [toOpen, setToOpen] = useState(false);
+  const [carouselSlide, setCarouselSlide] = useState(0);
+  const [isAutoPlay, setIsAutoPlay] = useState(true);
+
+  useEffect(() => {
+    if (!isAutoPlay || view !== "landing") return;
+    const timer = setInterval(() => {
+      setCarouselSlide((prev) => (prev + 1) % 4);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [isAutoPlay, view]);
+
+  const handleSwapStations = () => {
+    const tempFrom = from;
+    setFrom(to);
+    setTo(tempFrom);
+  };
 
   useEffect(() => {
     try {
@@ -104,7 +211,7 @@ export default function Home() {
       setTimeout(() => setToast(null), 2200);
       return;
     }
-    setView("prefs");
+    find();
   };
   const find = () => {
     const res = findJourneys(from, to, date, pref);
@@ -262,104 +369,57 @@ export default function Home() {
       <main className="flex-1">
         {/* LANDING */}
         {view === "landing" && (
-          <div className="max-w-[1120px] mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-8">
-            <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-6 lg:gap-8 items-start">
+          <div className="max-w-[1180px] mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-12">
+            <div className="grid lg:grid-cols-[1fr_1.05fr] gap-6 lg:gap-8 items-start">
+              {/* Left Column: Headline & Search Card */}
               <div>
-                <div className="inline-flex items-center gap-2 bg-white border border-[#E8E0D1] px-3 py-1.5">
+                <div className="inline-flex items-center gap-2 bg-white border border-[#E8E0D1] px-3 py-1.5 shadow-sm">
                   <span className="w-2 h-2 rounded-full bg-[#0E9F4B] animate-pulse" />
                   <span className="text-[11px] font-mono tracking-[0.12em] text-[#1B3A5C]">PUBLIC JOURNEY LAYER · INDIAN RAILWAYS</span>
                 </div>
-                <h1 className="font-display text-[40px] sm:text-[54px] leading-[0.9] mt-4">
+                <h1 className="font-display text-[38px] sm:text-[48px] leading-[0.92] mt-3.5 text-[#1B3A5C]">
                   WHERE ARE
                   <br />
-                  <span className="text-[#1B3A5C] bg-[#F2B705] px-1">YOU GOING?</span>
+                  <span className="bg-[#F2B705] px-1 text-[#1B3A5C]">YOU GOING?</span>
                 </h1>
-                <p className="mt-4 text-[14px] leading-6 text-[#1B3A5C]/80 max-w-[520px] border-l-[3px] border-[#F2B705] pl-4">
-                  Don&apos;t search for trains. <span className="font-semibold text-[#1B3A5C]">Plan your journey.</span> Tell us your destination and we&apos;ll build the simplest practical railway journey — including connections, transfer time and what to do if something changes.
+                <p className="mt-3 text-[13px] sm:text-[14px] leading-5 text-[#1B3A5C]/80 border-l-[3px] border-[#F2B705] pl-3.5 text-left">
+                  Don&apos;t search for trains. <span className="font-semibold text-[#1B3A5C]">Plan your journey.</span> Tell us your origin and destination and we&apos;ll find direct trains plus safe, validated connecting routes.
                 </p>
 
                 {/* Search Card - ticket form */}
-                <div className="mt-6 bg-white border border-[#E8E0D1] p-4 sm:p-4">
-                  <div className="flex items-center justify-between border-b border-[#E8E0D1] pb-3 mb-4">
+                <div className="mt-5 bg-white border border-[#1B3A5C] p-4 sm:p-5 shadow-[4px_4px_0_#1B3A5C]">
+                  <div className="flex items-center justify-between border-b border-[#E8E0D1] pb-2.5 mb-3.5">
                     <span className="font-display text-[12px] tracking-[0.16em] text-[#1B3A5C]">JOURNEY ENQUIRY</span>
-                    <span className="font-mono text-[11px] tracking-wide text-[#5C6B80]">NO LOGIN REQUIRED</span>
+                    <span className="font-mono text-[10px] tracking-wide text-[#5C6B80]">NO LOGIN REQUIRED</span>
                   </div>
                   <div className="grid gap-3">
-                    {/* From */}
-                    <div className="relative">
-                      <label className="font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] flex items-center gap-1.5">
-                        <MapPin className="w-3.5 h-3.5" /> FROM
-                      </label>
+                    {/* From Station */}
+                    <StationSelector
+                      label="FROM"
+                      type="from"
+                      value={from}
+                      onChange={(stationName) => setFrom(stationName)}
+                    />
+
+                    {/* Swap Stations Button */}
+                    <div className="flex justify-center -my-1 z-10">
                       <button
-                        onClick={() => setFromOpen((v) => !v)}
-                        className="mt-1 w-full flex items-center justify-between bg-[#FAF7F0] border border-[#E8E0D1] px-3 py-3 text-left hover:bg-white transition group"
+                        type="button"
+                        onClick={handleSwapStations}
+                        title="Swap Origin and Destination"
+                        className="w-7 h-7 bg-[#1B3A5C] text-[#F2B705] hover:bg-[#0F2340] hover:scale-110 active:scale-95 transition-all grid place-items-center border border-[#0F2340] shadow-sm cursor-pointer"
                       >
-                        <div>
-                          <div className="font-display text-[18px] tracking-wide leading-none">{from.toUpperCase()}</div>
-                          <div className="font-mono text-[11px] text-[#5C6B80] mt-0.5">
-                            {stations.find((s) => s.name === from)?.code ?? "NDLS"} · {stations.find((s) => s.name === from)?.state ?? ""}
-                          </div>
-                        </div>
-                        <ChevronDown className="w-4 h-4 text-[#5C6B80] group-hover:text-[#1B3A5C]" />
-                      </button>
-                      {fromOpen && (
-                        <div className="absolute z-20 mt-1 w-full bg-white border border-[#E8E0D1] max-h-64 overflow-auto shadow-[4px_4px_0_#1B3A5C]">
-                          {stations.slice(0, 30).map((s) => (
-                            <button
-                              key={s.id}
-                              onClick={() => {
-                                setFrom(s.name);
-                                setFromOpen(false);
-                              }}
-                              className={`w-full text-left px-3 py-2.5 flex justify-between items-center border-b border-[#FAF7F0] last:border-0 hover:bg-[#FAF7F0] ${from === s.name ? "bg-[#1B3A5C] text-white hover:bg-[#1B3A5C]" : "text-[#1B3A5C]"}`}
-                            >
-                              <span className="font-medium text-sm">{s.name}</span>
-                              <span className="font-mono text-xs opacity-70">{s.code}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex justify-center -my-1">
-                      <div className="w-7 h-7 bg-[#1B3A5C] text-[#F2B705] grid place-items-center border border-[#0F2340]">
                         <ArrowUpDown className="w-3.5 h-3.5" />
-                      </div>
-                    </div>
-                    {/* To */}
-                    <div className="relative">
-                      <label className="font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] flex items-center gap-1.5">
-                        <Flag className="w-3.5 h-3.5" /> TO
-                      </label>
-                      <button
-                        onClick={() => setToOpen((v) => !v)}
-                        className="mt-1 w-full flex items-center justify-between bg-white border border-[#1B3A5C] px-3 py-3 text-left hover:bg-[#FAF7F0] transition group"
-                      >
-                        <div>
-                          <div className="font-display text-[18px] tracking-wide leading-none">{to.toUpperCase()}</div>
-                          <div className="font-mono text-[11px] text-[#5C6B80] mt-0.5">
-                            {stations.find((s) => s.name === to)?.code ?? "MAO"} · {stations.find((s) => s.name === to)?.state ?? "Goa"}
-                          </div>
-                        </div>
-                        <ChevronDown className="w-4 h-4 text-[#5C6B80]" />
                       </button>
-                      {toOpen && (
-                        <div className="absolute z-20 mt-1 w-full bg-white border border-[#E8E0D1] max-h-64 overflow-auto shadow-[4px_4px_0_#1B3A5C]">
-                          {stations.map((s) => (
-                            <button
-                              key={s.id}
-                              onClick={() => {
-                                setTo(s.name);
-                                setToOpen(false);
-                              }}
-                              className={`w-full text-left px-3 py-2.5 flex justify-between items-center border-b border-[#FAF7F0] hover:bg-[#FAF7F0] ${to === s.name ? "bg-[#1B3A5C] text-white" : "text-[#1B3A5C]"}`}
-                            >
-                              <span className="font-medium text-sm">{s.name}</span>
-                              <span className="font-mono text-xs opacity-70">{s.code}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
                     </div>
+
+                    {/* To Station */}
+                    <StationSelector
+                      label="TO"
+                      type="to"
+                      value={to}
+                      onChange={(stationName) => setTo(stationName)}
+                    />
                     {/* Date */}
                     <div>
                       <label className="font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] flex items-center gap-1.5">
@@ -369,16 +429,16 @@ export default function Home() {
                         type="date"
                         value={date}
                         onChange={(e) => setDate(e.target.value)}
-                        className="mt-1 w-full bg-white border border-[#E8E0D1] px-3 py-3 font-mono text-sm outline-none focus:border-[#1B3A5C] focus:ring-1 focus:ring-[#1B3A5C]"
+                        className="mt-1 w-full bg-white border border-[#E8E0D1] px-3 py-2.5 font-mono text-sm outline-none focus:border-[#1B3A5C] focus:ring-1 focus:ring-[#1B3A5C]"
                       />
-                      <div className="font-mono text-[11px] text-[#5C6B80] mt-1.5 flex items-center gap-1">
+                      <div className="font-mono text-[10px] text-[#5C6B80] mt-1 flex items-center gap-1">
                         <Timer className="w-3 h-3" /> {formatDateShort(date).toUpperCase()} · {formatDate(date)}
                       </div>
                     </div>
                   </div>
                   <button
                     onClick={doSearch}
-                    className="mt-4 w-full bg-[#F2B705] text-[#1B3A5C] border-[2px] border-[#1B3A5C] font-display text-[15px] tracking-[0.08em] py-3 flex items-center justify-center gap-2 hover:brightness-105 transition shadow-[3px_3px_0_#1B3A5C] active:shadow-none active:translate-x-[1px] active:translate-y-[1px]"
+                    className="mt-4 w-full bg-[#F2B705] text-[#1B3A5C] border-[2px] border-[#1B3A5C] font-display text-[15px] tracking-[0.08em] py-3 flex items-center justify-center gap-2 hover:brightness-105 transition shadow-[3px_3px_0_#1B3A5C] active:shadow-none active:translate-x-[1px] active:translate-y-[1px] cursor-pointer"
                   >
                     FIND MY JOURNEY <ArrowRight className="w-4 h-4" />
                   </button>
@@ -388,120 +448,197 @@ export default function Home() {
                       setTo("Goa");
                       setDate(todayISO());
                       setPref("easy");
-                      doSearch();
+                      find();
                     }}
-                    className="mt-3 w-full text-[13px] text-[#1B3A5C] underline decoration-[#F2B705] decoration-2 underline-offset-4 hover:text-[#0F2340] py-1 flex items-center justify-center gap-1.5"
+                    className="mt-2.5 w-full text-[12px] text-[#1B3A5C] underline decoration-[#F2B705] decoration-2 underline-offset-4 hover:text-[#0F2340] py-1 flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Search className="w-3.5 h-3.5" /> Try sample: New Delhi → Goa
                   </button>
-                  <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] text-center mt-2">SYNTHETIC DATA · NO PAYMENT · NO OTP</p>
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {[
-                    ["Checks interchange time", ShieldCheck],
-                    ["Same-station awareness", MapPin],
-                    ["Delay risk explained", Clock3],
-                    ["Recovery options", Route],
-                  ].map(([label, Icon]: any) => (
-                    <span key={label} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-[#E8E0D1] font-mono text-[11px] tracking-wide">
-                      <Icon className="w-3 h-3" /> {label}
-                    </span>
-                  ))}
+                  <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] text-center mt-1.5">SYNTHETIC DATA · NO PAYMENT · NO OTP</p>
                 </div>
               </div>
 
-              {/* Visual Journey Preview - station board */}
-              <div className="lg:sticky lg:top-[68px]">
-                <div className="bg-white border border-[#E8E0D1] overflow-hidden">
-                  <div className="bg-[#1B3A5C] text-[#FAF7F0] px-4 py-2.5 flex items-center justify-between">
-                    <span className="font-display text-[11px] tracking-[0.16em]">PREVIEW — TIMETABLE</span>
-                    <span className="font-mono text-[10px] tracking-[0.12em] bg-[#F2B705] text-[#1B3A5C] px-2 py-1">LIVE PROTOTYPE</span>
+              {/* Right Column: 'Why Raasta Is Better' Interactive Carousel */}
+              <div
+                className="bg-white border border-[#1B3A5C] shadow-[4px_4px_0_#1B3A5C] overflow-hidden flex flex-col justify-between"
+                onMouseEnter={() => setIsAutoPlay(false)}
+                onMouseLeave={() => setIsAutoPlay(true)}
+              >
+                {/* Carousel Header & Controls */}
+                <div className="bg-[#1B3A5C] text-[#FAF7F0] px-4 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5 text-[#F2B705]" />
+                    <span className="font-display text-[11px] sm:text-[12px] tracking-[0.14em]">
+                      WHY OUR TRAIN SEARCH IS BETTER
+                    </span>
                   </div>
-                  <div className="p-4 sm:p-5">
-                    <div className="flex items-baseline justify-between">
-                      <div className="font-display text-[14px] tracking-wide">NEW DELHI → GOA</div>
-                      <span className="font-mono text-[11px] text-[#5C6B80]">VIA MUMBAI · SYNTHETIC</span>
-                    </div>
-
-                    {/* rail timeline mini */}
-                    <div className="mt-4 relative">
-                      {/* vertical rail */}
-                      <div className="absolute left-[16px] top-[8px] bottom-[8px] w-[3px] bg-[#1B3A5C]" />
-                      {/* sleepers */}
-                      <div className="absolute left-[8px] top-[8px] bottom-[8px] w-[19px] flex flex-col justify-between py-2 pointer-events-none">
-                        {Array.from({ length: 12 }).map((_, i) => (
-                          <div key={i} className="h-[2px] bg-[#1B3A5C] w-full opacity-40" />
-                        ))}
-                      </div>
-                      <div className="space-y-4 pl-8">
-                        <div className="relative flex gap-3">
-                          <span className="absolute -left-[24px] top-1 w-[14px] h-[14px] rounded-full bg-[#1B3A5C] border-[3px] border-[#FAF7F0] shadow-[0_0_0_1px_#1B3A5C]" />
-                          <div className="flex-1">
-                            <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">10:55</div>
-                            <div className="inline-block bg-[#1B3A5C] text-[#FAF7F0] font-display text-[12px] tracking-wide px-2 py-1 leading-none mt-1">NEW DELHI</div>
-                            <div className="font-mono text-[11px] text-[#5C6B80] mt-1 flex items-center gap-1">
-                              <TrainFront className="w-3 h-3" /> 12952 RAJDHANI · 3A
-                            </div>
-                          </div>
-                        </div>
-                        <div className="relative">
-                          <span className="absolute -left-[24px] top-1 w-[14px] h-[14px] rounded-full bg-white border-[3px] border-[#1B3A5C]" />
-                          <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">06:55</div>
-                          <div className="inline-block bg-white border border-[#1B3A5C] text-[#1B3A5C] font-display text-[12px] tracking-wide px-2 py-1 leading-none mt-1">
-                            MUMBAI CENTRAL
-                          </div>
-                          <div className="mt-2 border border-[#E8E0D1] bg-[#FAF7F0] p-2.5 flex items-start gap-2">
-                            <ArrowLeftRight className="w-3.5 h-3.5 text-[#1B3A5C] mt-0.5 shrink-0" />
-                            <div className="flex-1">
-                              <div className="font-mono text-[11px] font-semibold flex items-center gap-2">
-                                CHANGE · <span className="bg-[#1B3A5C] text-white px-1">2H 35M</span>
-                                <span className="ml-auto inline-flex items-center gap-1 font-mono text-[10px] tracking-wide text-white px-1.5 py-0.5" style={{ background: RISK_COLOR.low }}>
-                                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                                  LOW
-                                </span>
-                              </div>
-                              <div className="font-mono text-[11px] text-[#5C6B80] mt-1">SAME STATION · 12 MIN WALK · BUFFER FOR DELAY</div>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="relative flex gap-3">
-                          <span className="absolute -left-[24px] top-1 w-[14px] h-[14px] rounded-full bg-[#1B3A5C] border-[3px] border-[#FAF7F0] shadow-[0_0_0_1px_#1B3A5C]" />
-                          <div className="flex-1">
-                            <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">09:30</div>
-                            <div className="inline-block bg-[#1B3A5C] text-[#FAF7F0] font-display text-[12px] tracking-wide px-2 py-1 leading-none mt-1">MUMBAI CENTRAL</div>
-                            <div className="font-mono text-[11px] text-[#5C6B80] mt-1 flex items-center gap-1">
-                              <TrainFront className="w-3 h-3" /> 10104 MANDOVI · SL
-                            </div>
-                          </div>
-                        </div>
-                        <div className="relative flex gap-3">
-                          <span className="absolute -left-[24px] top-1 w-[14px] h-[14px] bg-[#F2B705] border-[2px] border-[#1B3A5C] grid place-items-center">
-                            <Flag className="w-2.5 h-2.5 text-[#1B3A5C]" />
-                          </span>
-                          <div>
-                            <div className="font-mono text-[11px] font-semibold text-[#1B3A5C]">17:20</div>
-                            <div className="inline-block bg-[#F2B705] border border-[#1B3A5C] text-[#1B3A5C] font-display text-[12px] tracking-wide px-2 py-1 leading-none mt-1">MADGAON · GOA</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-4 grid grid-cols-3 gap-2">
-                      {[
-                        ["DURATION", "31H 25M"],
-                        ["CHANGES", "1"],
-                        ["FARE", "₹2,845"],
-                      ].map(([k, v]) => (
-                        <div key={k} className="border border-[#E8E0D1] bg-[#FAF7F0] p-2 text-center">
-                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80]">{k}</div>
-                          <div className="font-mono text-[13px] font-semibold text-[#1B3A5C] mt-0.5">{v}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] mt-3 text-center">TIMELINE IS THE VISUAL IDENTITY — PROGRESSIVE DISCLOSURE</p>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] text-[#F2B705] tracking-widest bg-[#0F2340] px-2 py-0.5 border border-[#F2B705]/30">
+                      0{carouselSlide + 1} / 04
+                    </span>
+                    <button
+                      onClick={() => setCarouselSlide((prev) => (prev === 0 ? 3 : prev - 1))}
+                      className="w-6 h-6 rounded bg-[#FAF7F0] text-[#1B3A5C] hover:bg-[#F2B705] transition grid place-items-center cursor-pointer"
+                      title="Previous feature"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setCarouselSlide((prev) => (prev + 1) % 4)}
+                      className="w-6 h-6 rounded bg-[#FAF7F0] text-[#1B3A5C] hover:bg-[#F2B705] transition grid place-items-center cursor-pointer"
+                      title="Next feature"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
-                <div className="mt-2 text-center font-mono text-[11px] tracking-wide text-[#5C6B80]">BUILT WITH OPENAI AS EXPLANATION LAYER — NOT A RAILWAY DATABASE</div>
+
+                {/* Slide Active Content */}
+                {(() => {
+                  const s = CAROUSEL_SLIDES[carouselSlide];
+                  const Icon = s.icon;
+                  return (
+                    <div className="p-5 flex-1 flex flex-col justify-between animate-fadeIn">
+                      <div>
+                        {/* Slide Category Tag & Badge */}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold tracking-wider bg-[#1B3A5C]/10 text-[#1B3A5C] px-2 py-0.5 border border-[#1B3A5C]/20">
+                            <Icon className="w-3 h-3 text-[#F2B705]" /> {s.tag}
+                          </span>
+                          <span className="font-mono text-[9px] tracking-wider text-[#0E9F4B] bg-[#0E9F4B]/10 border border-[#0E9F4B]/30 px-2 py-0.5 font-semibold">
+                            {s.badge}
+                          </span>
+                        </div>
+
+                        {/* Title & Subtitle */}
+                        <h3 className="font-display text-[20px] sm:text-[22px] leading-tight mt-2.5 text-[#1B3A5C]">
+                          {s.title}
+                        </h3>
+                        <p className="text-[13px] font-semibold text-[#5C6B80] mt-0.5">
+                          {s.subtitle}
+                        </p>
+
+                        <p className="text-[13px] leading-5 text-[#1B3A5C]/80 mt-2.5 border-l-2 border-[#1B3A5C] pl-2.5">
+                          {s.desc}
+                        </p>
+
+                        {/* Feature Bullet Points */}
+                        <div className="mt-3.5 space-y-1.5">
+                          {s.points.map((pt, i) => (
+                            <div key={i} className="flex items-start gap-2 text-[12px] text-[#1B3A5C]">
+                              <Check className="w-3.5 h-3.5 text-[#0E9F4B] shrink-0 mt-0.5" />
+                              <span>{pt}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Interactive Visual Box */}
+                      <div className="mt-4 pt-3 border-t border-[#E8E0D1]">
+                        {s.demo.type === "layover" && (
+                          <div className="bg-[#FAF7F0] border border-[#E8E0D1] p-3">
+                            <div className="font-mono text-[10px] text-[#5C6B80] tracking-wider mb-1.5">
+                              INTERACTIVE ROUTE SIMULATION:
+                            </div>
+                            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-left">
+                              <div className="bg-white border border-[#E8E0D1] p-2 flex-1 w-full">
+                                <div className="font-mono text-[10px] text-[#5C6B80]">LEG 1</div>
+                                <div className="font-mono text-[11px] font-bold text-[#1B3A5C]">{s.demo.t1}</div>
+                                <div className="font-mono text-[10px] text-[#0E9F4B]">{s.demo.t1Time}</div>
+                              </div>
+                              <div className="px-2 py-1 bg-[#F2B705] text-[#1B3A5C] font-mono text-[10px] font-bold border border-[#1B3A5C] shrink-0">
+                                ➔ 2h 35m BUFFER ➔
+                              </div>
+                              <div className="bg-white border border-[#E8E0D1] p-2 flex-1 w-full">
+                                <div className="font-mono text-[10px] text-[#5C6B80]">LEG 2</div>
+                                <div className="font-mono text-[11px] font-bold text-[#1B3A5C]">{s.demo.t2}</div>
+                                <div className="font-mono text-[10px] text-[#0E9F4B]">{s.demo.t2Time}</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {s.demo.type === "risk" && (
+                          <div className="bg-[#FAF7F0] border border-[#E8E0D1] p-3">
+                            <div className="font-mono text-[10px] text-[#5C6B80] tracking-wider mb-2">
+                              SAFETY BUFFER RISK TIERS:
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              {s.demo.bars?.map((b, i) => (
+                                <div key={i} className="bg-white border p-2 text-center" style={{ borderColor: b.color }}>
+                                  <div className="font-mono text-[10px] font-bold text-white px-1 py-0.5" style={{ background: b.color }}>
+                                    {b.label}
+                                  </div>
+                                  <div className="font-mono text-[12px] font-bold text-[#1B3A5C] mt-1">{b.buffer}</div>
+                                  <div className="font-mono text-[9px] text-[#5C6B80] mt-0.5">{b.note}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {s.demo.type === "metro" && (
+                          <div className="bg-[#FAF7F0] border border-[#E8E0D1] p-3">
+                            <div className="font-mono text-[10px] text-[#5C6B80] tracking-wider mb-1.5">
+                              CROSS-TERMINAL ROAD INTEGRATION:
+                            </div>
+                            <div className="space-y-1.5">
+                              {s.demo.routes?.map((r, i) => (
+                                <div key={i} className="bg-white border border-[#E8E0D1] p-2 flex items-center justify-between text-[11px] font-mono">
+                                  <span className="font-bold text-[#1B3A5C]">{r.from} ➔ {r.to}</span>
+                                  <span className="text-[#0E9F4B] font-semibold">{r.road}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {s.demo.type === "simulator" && (
+                          <div className="bg-[#FAF7F0] border border-[#E8E0D1] p-3">
+                            <div className="font-mono text-[10px] text-[#5C6B80] tracking-wider mb-1.5">
+                              1-CLICK DELAY RECOVERY:
+                            </div>
+                            <div className="bg-white border border-[#1B3A5C] p-2.5 flex items-center justify-between">
+                              <div className="font-mono text-[11px] text-[#C62828] font-bold">
+                                ⚠ {s.demo.delay}
+                              </div>
+                              <div className="font-mono text-[11px] text-[#0E9F4B] font-bold">
+                                ✓ {s.demo.result}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Bottom Navigation Dots / Tabs */}
+                <div className="bg-[#FAF7F0] border-t border-[#E8E0D1] px-4 py-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    {CAROUSEL_SLIDES.map((s, idx) => (
+                      <button
+                        key={s.id}
+                        onClick={() => setCarouselSlide(idx)}
+                        className={`h-2 transition-all rounded-full cursor-pointer ${
+                          carouselSlide === idx
+                            ? "w-7 bg-[#1B3A5C]"
+                            : "w-2 bg-[#1B3A5C]/30 hover:bg-[#1B3A5C]/60"
+                        }`}
+                        title={s.title}
+                      />
+                    ))}
+                  </div>
+                  <div className="font-mono text-[10px] text-[#5C6B80] flex items-center gap-1">
+                    {isAutoPlay ? (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#0E9F4B] animate-ping" /> AUTO-PLAYING
+                      </span>
+                    ) : (
+                      <span>HOVER PAUSED</span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -564,81 +701,180 @@ export default function Home() {
         {/* RESULTS */}
         {view === "results" && (
           <div className="max-w-[720px] mx-auto px-4 sm:px-6 pt-6 pb-8">
-            <button onClick={() => setView("prefs")} className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] hover:text-[#1B3A5C] mb-3">
-              <ArrowRight className="w-3.5 h-3.5 rotate-180" /> PREFERENCES
+            <button onClick={() => setView("landing")} className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] hover:text-[#1B3A5C] mb-3">
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" /> CHANGE SEARCH
             </button>
             <div className="flex items-baseline justify-between gap-4">
-              <h2 className="font-display text-[24px] sm:text-[28px] leading-none">WE FOUND {journeys.length} WAYS</h2>
+              <div>
+                <h2 className="font-display text-[24px] sm:text-[28px] leading-none">
+                  {from.toUpperCase()} → {to.toUpperCase()}
+                </h2>
+                <p className="text-[13px] text-[#5C6B80] mt-1">We found {journeys.length} practical route combinations.</p>
+              </div>
               <span className="font-mono text-[11px] tracking-wide bg-white border border-[#E8E0D1] px-2 py-1 shrink-0">{formatDateShort(date).toUpperCase()}</span>
             </div>
-            <p className="text-[13px] text-[#5C6B80] mt-1">Tap a card to see the full rail timeline and interchange details.</p>
+
+            {/* Quick Filter / Sort Pills */}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {[
+                { id: "easy", label: "RECOMMENDED (EASY)", icon: Leaf },
+                { id: "fastest", label: "FASTEST", icon: Zap },
+                { id: "cheapest", label: "CHEAPEST", icon: Wallet },
+              ].map((pill) => (
+                <button
+                  key={pill.id}
+                  onClick={() => {
+                    setPref(pill.id as Preference);
+                    const res = findJourneys(from, to, date, pill.id as Preference);
+                    if (res.length > 0) setJourneys(res);
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono tracking-wide border transition ${
+                    pref === pill.id
+                      ? "bg-[#1B3A5C] text-white border-[#1B3A5C] shadow-[2px_2px_0_#F2B705]"
+                      : "bg-white text-[#1B3A5C] border-[#E8E0D1] hover:border-[#1B3A5C]"
+                  }`}
+                >
+                  <pill.icon className="w-3 h-3" />
+                  {pill.label}
+                </button>
+              ))}
+            </div>
 
             <div className="grid gap-4 mt-6">
               {journeys.map((j, idx) => {
                 const isRecommended = idx === 0;
+                const isDirect = j.interchangeCount === 0;
                 const label = isRecommended ? "BEST FOR YOU" : idx === 1 ? "FASTEST" : "CHEAPEST";
                 const transfer = (j.legs.find((l) => l.type === "transfer") as any)?.transfer;
                 const legs = j.legs.filter((l) => l.type === "train") as any[];
                 const risk = j.riskLevel;
+                const departureTime = legs[0]?.departure || "--:--";
+                const arrivalTime = legs[legs.length - 1]?.arrival || "--:--";
+                const originCode = legs[0]?.from?.code || j.origin.code;
+                const destCode = legs[legs.length - 1]?.to?.code || j.destination.code;
+
                 return (
                   <div
                     key={j.id}
-                    className={`bg-white border overflow-hidden flex ${isRecommended ? "border-[#1B3A5C] shadow-[4px_4px_0_#1B3A5C]" : "border-[#E8E0D1]"} ${isRecommended ? "scale-[1.01]" : ""}`}
+                    className={`bg-white border overflow-hidden flex flex-col sm:flex-row ${isRecommended ? "border-[#1B3A5C] shadow-[4px_4px_0_#1B3A5C]" : "border-[#E8E0D1]"} ${isRecommended ? "scale-[1.01]" : ""}`}
                   >
-                    {/* left edge strip */}
-                    <div className="w-[6px] shrink-0" style={{ background: RISK_COLOR[risk] ?? "#1B3A5C" }} />
-                    <div className={`flex-1 ${isRecommended ? "p-5 sm:p-6" : "p-4"}`}>
-                      {isRecommended && (
-                        <div className="font-display text-[11px] tracking-[0.16em] bg-[#F2B705] text-[#1B3A5C] border border-[#1B3A5C] inline-block px-2 py-1 mb-3">RECOMMENDED</div>
-                      )}
-                      <div className="flex items-center justify-between">
-                        <span className="font-display text-[11px] tracking-[0.14em] text-[#5C6B80]">{label}</span>
-                        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-wide text-white px-2 py-1" style={{ background: RISK_COLOR[risk] }}>
-                          <span className="w-1.5 h-1.5 rounded-full bg-white" /> {RISK_LABEL[risk].toUpperCase()}
-                        </span>
-                      </div>
-                      <div className={`font-display tracking-wide mt-2 ${isRecommended ? "text-[16px]" : "text-[14px]"}`}>
-                        {j.origin.name.toUpperCase()} → {j.destination.city.toUpperCase()} <span className="font-mono font-normal text-[11px] text-[#5C6B80]">· {formatDateShort(date).toUpperCase()}</span>
-                      </div>
-                      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2.5">
-                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
-                            <TrainFront className="w-3 h-3" /> TRAINS
-                          </div>
-                          <div className="font-mono text-[13px] font-semibold text-[#1B3A5C] mt-1">
-                            {legs.length} · {j.interchangeCount} CHANGE
-                          </div>
-                        </div>
-                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2.5">
-                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
-                            <Clock3 className="w-3 h-3" /> DURATION
-                          </div>
-                          <div className="font-mono text-[13px] font-semibold text-[#1B3A5C] mt-1">{formatDuration(j.totalDurationMinutes).toUpperCase()}</div>
-                          <div className="font-mono text-[11px] text-[#5C6B80]">{transfer ? formatDuration(transfer.durationMinutes).toUpperCase() + " CHANGE" : "DIRECT"}</div>
-                        </div>
-                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2.5">
-                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
-                            <IndianRupee className="w-3 h-3" /> FARE
-                          </div>
-                          <div className="font-mono text-[13px] font-semibold text-[#1B3A5C] mt-1">₹{j.totalCost.toLocaleString("en-IN")}</div>
-                          <div className="font-mono text-[11px] text-[#5C6B80]">AC 3-TIER</div>
-                        </div>
-                      </div>
-                      {transfer && (
-                        <div className="mt-3 border border-[#E8E0D1] bg-[#FAF7F0] p-3 flex items-start gap-2">
-                          {risk === "low" ? (
-                            <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: RISK_COLOR.low }} />
-                          ) : risk === "medium" ? (
-                            <ShieldAlert className="w-4 h-4 shrink-0" style={{ color: RISK_COLOR.medium }} />
+                    {/* left/top edge color strip */}
+                    <div className="h-[4px] sm:h-auto sm:w-[6px] shrink-0" style={{ background: isDirect ? "#0E9F4B" : (RISK_COLOR[risk] ?? "#1B3A5C") }} />
+                    <div className={`flex-1 ${isRecommended ? "p-4 sm:p-5" : "p-4"}`}>
+                      {/* Top Sublabel & Category Tags */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5 pb-2 border-b border-[#FAF7F0]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {isDirect ? (
+                            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold tracking-wider bg-[#0E9F4B] text-white px-2 py-0.5 shadow-sm">
+                              <Sparkles className="w-3 h-3 text-[#F2B705]" /> DIRECT TRAIN · NO INTERCHANGE
+                            </span>
                           ) : (
-                            <OctagonAlert className="w-4 h-4 shrink-0" style={{ color: RISK_COLOR.high }} />
+                            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold tracking-wider bg-[#1B3A5C] text-[#FAF7F0] px-2 py-0.5">
+                              <Route className="w-3 h-3 text-[#F2B705]" /> 1 INTERCHANGE · VIA {getStationName(transfer?.fromStationId).toUpperCase()} ({formatDuration(transfer?.durationMinutes)} LAYOVER)
+                            </span>
                           )}
-                          <div className="font-mono text-[12px] leading-4">
-                            <span className="font-semibold text-[#1B3A5C]">{formatDuration(transfer.durationMinutes).toUpperCase()} CONNECTION</span>
-                            <span className="text-[#5C6B80]"> — {transfer.reason}</span>
+                          {isRecommended && (
+                            <span className="font-display text-[10px] tracking-[0.14em] bg-[#F2B705] text-[#1B3A5C] border border-[#1B3A5C] px-1.5 py-0.5 font-bold">
+                              RECOMMENDED
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="font-display text-[11px] tracking-[0.14em] text-[#5C6B80]">{label}</span>
+                          <span className="inline-flex items-center gap-1 font-mono text-[10px] tracking-wide text-white px-2 py-0.5" style={{ background: isDirect ? "#0E9F4B" : RISK_COLOR[risk] }}>
+                            <span className="w-1.5 h-1.5 rounded-full bg-white" /> {isDirect ? "ZERO RISK" : RISK_LABEL[risk].toUpperCase()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Header: Stations & Timings */}
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <div>
+                          <div className="font-display text-[16px] sm:text-[18px] tracking-wide text-[#1B3A5C]">
+                            {j.origin.name.toUpperCase()} ({originCode}) → {j.destination.name.toUpperCase()} ({destCode})
+                          </div>
+                          <div className="font-mono text-[12px] font-bold text-[#1B3A5C] mt-0.5 flex items-center gap-2">
+                            <span>{departureTime}</span>
+                            <ArrowRight className="w-3.5 h-3.5 text-[#5C6B80]" />
+                            <span>{arrivalTime} {legs.length > 1 || legs[0]?.dayOffset ? `(+${legs[legs.length - 1]?.dayOffset || 1} day)` : ""}</span>
+                            <span className="font-normal text-[11px] text-[#5C6B80]">· {formatDateShort(date).toUpperCase()}</span>
+                          </div>
+                        </div>
+
+                        {/* Prominent Price & Duration Header Callout */}
+                        <div className="text-right">
+                          <div className="font-display text-[18px] sm:text-[20px] text-[#1B3A5C] leading-none">
+                            ₹{j.totalCost.toLocaleString("en-IN")}
+                          </div>
+                          <div className="font-mono text-[10px] text-[#5C6B80] mt-0.5">AC 3-TIER EST.</div>
+                        </div>
+                      </div>
+
+                      {/* Train Numbers & Names Badge */}
+                      <div className="mt-2.5 bg-[#FAF7F0] border border-[#E8E0D1] px-2.5 py-1.5 font-mono text-[11px] text-[#1B3A5C] flex flex-wrap items-center gap-1.5">
+                        <TrainFront className="w-3.5 h-3.5 text-[#1B3A5C] shrink-0" />
+                        {legs.map((l: any, i: number) => (
+                          <span key={i} className="inline-flex items-center gap-1">
+                            <span className="font-bold">{l.train.number}</span> {l.train.name}
+                            {i < legs.length - 1 && <span className="text-[#5C6B80] font-bold mx-1">➔</span>}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* 3 Metric Cards: Duration, Route/Layover, Price */}
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2 sm:p-2.5">
+                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
+                            <Clock3 className="w-3 h-3" /> TOTAL DURATION
+                          </div>
+                          <div className="font-mono text-[13px] sm:text-[14px] font-bold text-[#1B3A5C] mt-1">
+                            {formatDuration(j.totalDurationMinutes).toUpperCase()}
+                          </div>
+                          <div className="font-mono text-[10px] text-[#5C6B80]">
+                            {isDirect ? "DIRECT ROUTE" : "INCL. LAYOVER"}
+                          </div>
+                        </div>
+
+                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2 sm:p-2.5">
+                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
+                            <ArrowLeftRight className="w-3 h-3" /> INTERCHANGE
+                          </div>
+                          <div className="font-mono text-[13px] sm:text-[14px] font-bold text-[#1B3A5C] mt-1">
+                            {isDirect ? "DIRECT" : "1 CHANGE"}
+                          </div>
+                          <div className="font-mono text-[10px] text-[#5C6B80] truncate">
+                            {transfer ? `${formatDuration(transfer.durationMinutes)} @ ${getStationName(transfer.fromStationId)}` : "NO STOPS"}
+                          </div>
+                        </div>
+
+                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2 sm:p-2.5">
+                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
+                            <IndianRupee className="w-3 h-3" /> TOTAL FARE
+                          </div>
+                          <div className="font-mono text-[13px] sm:text-[14px] font-bold text-[#1B3A5C] mt-1">
+                            ₹{j.totalCost.toLocaleString("en-IN")}
+                          </div>
+                          <div className="font-mono text-[10px] text-[#5C6B80]">AC 3-TIER</div>
+                        </div>
+                      </div>
+
+                      {transfer && (
+                        <div className="mt-3 border border-[#E8E0D1] bg-[#FAF7F0] p-2.5 sm:p-3 flex items-start gap-2">
+                          {risk === "low" ? (
+                            <ShieldCheck className="w-4 h-4 shrink-0 text-[#0E9F4B]" />
+                          ) : risk === "medium" ? (
+                            <ShieldAlert className="w-4 h-4 shrink-0 text-[#D98200]" />
+                          ) : (
+                            <OctagonAlert className="w-4 h-4 shrink-0 text-[#C62828]" />
+                          )}
+                          <div className="font-mono text-[11px] sm:text-[12px] leading-4">
+                            <span className="font-semibold text-[#1B3A5C]">{formatDuration(transfer.durationMinutes).toUpperCase()} LAYOVER:</span>
+                            <span className="text-[#5C6B80]"> {transfer.reason}</span>
                           </div>
                         </div>
                       )}
+
                       <div className="mt-3 flex gap-2">
                         <button
                           onClick={() => {
@@ -648,7 +884,7 @@ export default function Home() {
                           }}
                           className={`flex-1 inline-flex items-center justify-center gap-1.5 font-display text-[13px] tracking-[0.08em] py-2.5 border-[2px] transition ${isRecommended ? "bg-[#F2B705] text-[#1B3A5C] border-[#1B3A5C] shadow-[2px_2px_0_#1B3A5C]" : "bg-white text-[#1B3A5C] border-[#1B3A5C] hover:bg-[#FAF7F0]"}`}
                         >
-                          VIEW JOURNEY <ChevronRight className="w-3.5 h-3.5" />
+                          VIEW FULL TIMELINE <ChevronRight className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => saveJourney(j)}
@@ -1196,8 +1432,4 @@ export default function Home() {
       </footer>
     </div>
   );
-}
-
-function getStationName(id: string) {
-  return stations.find((s) => s.id === id)?.name ?? id;
 }
