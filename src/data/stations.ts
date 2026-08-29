@@ -45,17 +45,45 @@ export function getStationName(id: string): string {
   return st ? st.name : id;
 }
 
+const ALIAS_MAP: Record<string, string> = {
+  goa: "MAO",
+  madgaon: "MAO",
+  "vasco da gama": "VSG",
+  "new delhi": "NDLS",
+  delhi: "NDLS",
+  mumbai: "MMCT",
+  "mumbai central": "MMCT",
+  bombay: "MMCT",
+  kolkata: "HWH",
+  howrah: "HWH",
+  chennai: "MAS",
+  bengaluru: "SBC",
+  bangalore: "SBC",
+  hyderabad: "HYB",
+  pune: "PUNE",
+  jaipur: "JP",
+  ahmedabad: "ADI",
+  lucknow: "LKO",
+  varanasi: "BSB",
+  patna: "PNBE",
+};
+
 export function getStationByName(query: string): Station {
   if (!query) return getStation("NDLS");
   const q = query.trim().toLowerCase();
+  if (ALIAS_MAP[q]) return getStation(ALIAS_MAP[q]);
+
   const directMatch = stationMapByName.get(q);
   if (directMatch) return directMatch;
 
+  const cityMatches = stationMapByCity.get(q);
+  if (cityMatches && cityMatches.length > 0) {
+    if (q === "goa") return getStation("MAO");
+    return cityMatches[0];
+  }
+
   const codeMatch = stationMapByCode.get(q.toUpperCase());
   if (codeMatch) return codeMatch;
-
-  const cityMatches = stationMapByCity.get(q);
-  if (cityMatches && cityMatches.length > 0) return cityMatches[0];
 
   const found = stations.find((s) => 
     s.name.toLowerCase() === q || 

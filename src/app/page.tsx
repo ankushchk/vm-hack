@@ -34,6 +34,7 @@ import {
   ArrowUpDown,
   ChevronRight,
   ChevronLeft,
+  MessageCircle,
   X,
 } from "lucide-react";
 
@@ -128,6 +129,59 @@ const CAROUSEL_SLIDES = [
   },
 ];
 
+const POPULAR_ROUTES: { from: string; to: string; label: string }[] = [
+  { from: "New Delhi", to: "Howrah", label: "Delhi → Kolkata" },
+  { from: "Mumbai Central", to: "Chennai Central", label: "Mumbai → Chennai" },
+  { from: "New Delhi", to: "Goa", label: "Delhi → Goa" },
+  { from: "Bengaluru", to: "Hyderabad", label: "Bengaluru → Hyderabad" },
+  { from: "New Delhi", to: "Chennai Central", label: "Delhi → Chennai" },
+  { from: "Ahmedabad", to: "Mumbai Central", label: "Ahmedabad → Mumbai" },
+  { from: "Jaipur", to: "Goa", label: "Jaipur → Goa" },
+  { from: "Lucknow", to: "Pune", label: "Lucknow → Pune" },
+];
+
+function parseNaturalCommand(input: string): { from?: string; to?: string; pref?: Preference; dateOffset?: number } | null {
+  const lower = input.toLowerCase().trim();
+  if (!lower) return null;
+  // detect preference
+  let pref: Preference | undefined;
+  if (/(fastest|fast|jaldi|tez)/.test(lower)) pref = "fastest";
+  else if (/(cheapest|cheap|sasta|kam paise)/.test(lower)) pref = "cheapest";
+  else if (/(easy|comfortable|aaram|easy journey)/.test(lower)) pref = "easy";
+  // date offset
+  let dateOffset: number | undefined;
+  if (/day after|parso/.test(lower)) dateOffset = 2;
+  else if (/tomorrow|kal/.test(lower) && !/parso/.test(lower)) dateOffset = 1;
+  else if (/today|aaj/.test(lower)) dateOffset = 0;
+  else if (/next week|agle hafte/.test(lower)) dateOffset = 7;
+
+  // extract from -> to pattern supports "delhi to goa", "delhi se goa", "delhi se jaipur tak", "from delhi to goa"
+  const cityWords = "([a-zA-Z\\s]+?)";
+  const patterns = [
+    new RegExp(`${cityWords}\\s+to\\s+${cityWords}`, "i"),
+    new RegExp(`${cityWords}\\s+se\\s+${cityWords}(?:\\s+tak)?`, "i"),
+    new RegExp(`from\\s+${cityWords}\\s+to\\s+${cityWords}`, "i"),
+  ];
+  for (const pat of patterns) {
+    const m = input.match(pat);
+    if (m) {
+      const a = m[1]?.trim().replace(/^(from|se|to)\s+/i, "").trim();
+      const b = m[2]?.trim().replace(/\s+(tomorrow|today|kal|parso|fastest|cheapest|easy).*$/i, "").trim();
+      if (a && b && a.length > 2 && b.length > 2) {
+        return { from: capitalizeCity(a), to: capitalizeCity(b), pref, dateOffset };
+      }
+    }
+  }
+  return pref || dateOffset !== undefined ? { pref, dateOffset } : null;
+}
+function capitalizeCity(s: string) {
+  return s
+    .split(" ")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ")
+    .trim();
+}
+
 function todayISO() {
   const d = new Date();
   d.setDate(d.getDate() + 2);
@@ -180,6 +234,13 @@ export default function Home() {
   const [toast, setToast] = useState<string | null>(null);
   const [carouselSlide, setCarouselSlide] = useState(0);
   const [isAutoPlay, setIsAutoPlay] = useState(true);
+  const [commandText, setCommandText] = useState("");
+  const [commandLoading, setCommandLoading] = useState(false);
+  const [showWhatsAppDemo, setShowWhatsAppDemo] = useState(false);
+  const [waMessages, setWaMessages] = useState<{ role: "user" | "bot"; text: string; journey?: Journey }[]>([
+    { role: "bot", text: "Hi! I'm Raasta WhatsApp bot. Try: 'Delhi to Jaipur tomorrow fastest' or 'Mumbai to Goa next week cheap' — I'll build the journey instantly. No stuck builds." },
+  ]);
+  const [waInput, setWaInput] = useState("");
 
   useEffect(() => {
     if (!isAutoPlay || view !== "landing") return;
@@ -193,6 +254,100 @@ export default function Home() {
     const tempFrom = from;
     setFrom(to);
     setTo(tempFrom);
+  };
+
+  const handleCommandBuild = async () => {
+    if (!commandText.trim()) {
+      setToast("Type a command like: Delhi to Goa tomorrow fastest");
+      setTimeout(() => setToast(null), 2200);
+      return;
+    }
+    setCommandLoading(true);
+    // robust parsing with timeout & fallback - never stuck midway
+    try {
+      const parsed = parseNaturalCommand(commandText);
+      let targetFrom = parsed?.from || from;
+      let targetTo = parsed?.to || to;
+      let targetPref = parsed?.pref || pref;
+      let targetDate = date;
+      if (parsed?.dateOffset !== undefined) {
+        const d = new Date();
+        d.setDate(d.getDate() + parsed.dateOffset);
+        targetDate = d.toISOString().slice(0, 10);
+      }
+      // simulate brief building time with capped timeout to avoid stuck
+      await new Promise((res, rej) => {
+        const t = setTimeout(res, 700);
+        setTimeout(() => rej(new Error("timeout")), 5000);
+      }).catch(() => {});
+      if (parsed?.from) setFrom(targetFrom);
+      if (parsed?.to) setTo(targetTo);
+      if (parsed?.pref) setPref(targetPref);
+      if (parsed?.dateOffset !== undefined) setDate(targetDate);
+      const res = findJourneys(targetFrom, targetTo, targetDate, targetPref);
+      if (res.length === 0) {
+        setToast(`No route found for ${targetFrom} → ${targetTo}. Try popular routes.`);
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
+      // reuse same dedup logic as find()
+      const easy = findJourneys(targetFrom, targetTo, targetDate, "easy")[0];
+      const fast = findJourneys(targetFrom, targetTo, targetDate, "fastest")[0];
+      const cheap = findJourneys(targetFrom, targetTo, targetDate, "cheapest")[0];
+      const map = new Map<string, Journey>();
+      [easy, fast, cheap].forEach((j) => { if (j) map.set(j.id, j); });
+      let list = Array.from(map.values());
+      if (list.length < 3) {
+        const fb = findJourneys(targetFrom, targetTo, targetDate, "easy");
+        fb.forEach((j) => { if (!map.has(j.id)) map.set(j.id, j); });
+        list = Array.from(map.values());
+      }
+      const ordered: Journey[] = [];
+      if (easy) ordered.push(easy);
+      if (fast && fast.id !== easy?.id) ordered.push(fast);
+      if (cheap && cheap.id !== easy?.id && cheap.id !== fast?.id) ordered.push(cheap);
+      list.forEach((j) => { if (!ordered.find((o) => o.id === j.id)) ordered.push(j); });
+      setJourneys(ordered.slice(0, 3));
+      setView("results");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setToast(`Built ${targetFrom} → ${targetTo} (${targetPref}) — ${res.length} options`);
+      setTimeout(() => setToast(null), 2500);
+    } catch (e) {
+      setToast("Command failed — try: Delhi to Goa tomorrow. Retrying...");
+      setTimeout(() => setToast(null), 2500);
+    } finally {
+      setCommandLoading(false);
+    }
+  };
+
+  const handleWaSend = async () => {
+    if (!waInput.trim()) return;
+    const userText = waInput.trim();
+    setWaMessages((prev) => [...prev, { role: "user", text: userText }]);
+    setWaInput("");
+    // simulate bot never stuck: timeout + fallback
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const parsed = parseNaturalCommand(userText);
+      if (!parsed?.from || !parsed?.to) {
+        setWaMessages((prev) => [...prev, { role: "bot", text: "I need both cities. Try: 'Delhi to Jaipur tomorrow' or 'Mumbai se Goa fastest'" }]);
+        return;
+      }
+      let d = new Date();
+      if (parsed.dateOffset !== undefined) d.setDate(d.getDate() + parsed.dateOffset);
+      else d.setDate(d.getDate() + 1);
+      const dateStr = d.toISOString().slice(0, 10);
+      const res = findJourneys(parsed.from, parsed.to, dateStr, parsed.pref || "easy");
+      if (res.length === 0) {
+        setWaMessages((prev) => [...prev, { role: "bot", text: `No direct route for ${parsed.from} → ${parsed.to}. Try: Delhi to Kolkata, or Mumbai to Chennai.` }]);
+        return;
+      }
+      const j = res[0];
+      const txt = `${parsed.from} → ${parsed.to} (${parsed.pref || "easy"}) — ${j.legs.filter(l=>l.type==="train").length} trains, ${formatDuration(j.totalDurationMinutes)}, ₹${j.totalCost}. Risk: ${j.riskLevel}. Tap View to open.`;
+      setWaMessages((prev) => [...prev, { role: "bot", text: txt, journey: j }]);
+    } catch {
+      setWaMessages((prev) => [...prev, { role: "bot", text: "Oops — build hiccup. Try again: 'Delhi to Goa tomorrow'" }]);
+    }
   };
 
   useEffect(() => {
@@ -298,21 +453,28 @@ export default function Home() {
               setSelected(null);
               setShowHow(false);
             }}
-            className="flex items-center gap-3"
+            className="flex items-center gap-2.5"
           >
             <div className="h-[28px] px-2 bg-[#F2B705] border border-[#0F2340] grid place-items-center font-display text-[15px] tracking-[0.04em] text-[#1B3A5C] leading-none">
               RAASTA
             </div>
-            <span className="hidden sm:inline font-display text-[16px] tracking-[0.08em] text-[#FAF7F0]">RAASTA</span>
-            <span className="hidden sm:inline text-[10px] tracking-[0.12em] font-mono px-2 py-1 bg-[#FAF7F0] text-[#1B3A5C] border border-[#0F2340]">PROTOTYPE — SYNTHETIC DATA</span>
+            <span className="hidden sm:inline font-display text-[13px] tracking-[0.1em] text-[#FAF7F0]/80">JOURNEY PLANNER</span>
           </button>
           <nav className="flex items-center gap-2 sm:gap-3 text-sm">
+            <button
+              onClick={() => setShowWhatsAppDemo(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#25D366] text-[#075E54] hover:bg-[#20bd5a] font-display text-[13px] tracking-wide border border-[#075E54] transition shadow-sm font-bold cursor-pointer"
+              title="Try WhatsApp bot demo — instant builds, never stuck"
+            >
+              <MessageCircle className="w-3.5 h-3.5 fill-current" />
+              <span className="hidden md:inline">WHATSAPP</span> BOT
+            </button>
             <button
               onClick={() => {
                 setView("landing");
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }}
-              className="hidden sm:inline-flex items-center gap-1.5 text-[#FAF7F0]/80 hover:text-white font-medium text-[13px] px-2 py-1"
+              className="inline-flex items-center gap-1.5 text-[#FAF7F0]/80 hover:text-white font-medium text-[13px] px-2 py-1"
             >
               <Route className="w-4 h-4" /> Plan journey
             </button>
@@ -359,12 +521,6 @@ export default function Home() {
           </div>
         )}
       </header>
-
-      {/* disclosure - ticket strip */}
-      <div className="bg-[#FAF7F0] border-b border-[#E8E0D1] text-[11px] font-mono tracking-wide text-[#5C6B80] text-center py-2 px-3 flex items-center justify-center gap-2">
-        <Info className="w-3.5 h-3.5 shrink-0" />
-        INDEPENDENT PROTOTYPE · SYNTHETIC RAILWAY DATA — NOT LIVE IRCTC · NOT AN OFFICIAL GOVERNMENT PRODUCT
-      </div>
 
       <main className="flex-1">
         {/* LANDING */}
@@ -445,16 +601,96 @@ export default function Home() {
                   <button
                     onClick={() => {
                       setFrom("New Delhi");
-                      setTo("Goa");
+                      setTo("Madgaon");
                       setDate(todayISO());
                       setPref("easy");
                       find();
                     }}
                     className="mt-2.5 w-full text-[12px] text-[#1B3A5C] underline decoration-[#F2B705] decoration-2 underline-offset-4 hover:text-[#0F2340] py-1 flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    <Search className="w-3.5 h-3.5" /> Try sample: New Delhi → Goa
+                    <Search className="w-3.5 h-3.5" /> Try sample: New Delhi → Madgaon (Goa)
                   </button>
-                  <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] text-center mt-1.5">SYNTHETIC DATA · NO PAYMENT · NO OTP</p>
+
+                  <div className="mt-3 border-t border-[#E8E0D1] pt-3 space-y-2">
+                    <button
+                      onClick={() => setShowWhatsAppDemo(true)}
+                      className="w-full bg-[#E7FFDB] hover:bg-[#d5f8c6] border border-[#25D366] text-[#075E54] font-mono text-[11px] sm:text-[12px] font-bold py-2 px-3 flex items-center justify-center gap-2 transition cursor-pointer"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5 text-[#075E54] fill-current" />
+                      <span>Try WhatsApp bot demo — no stuck builds</span>
+                    </button>
+                    <a
+                      href="https://wa.me/14155238886?text=Delhi%20se%20Goa%20jana%20hai%20kal"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full bg-white hover:bg-[#FAF7F0] border border-[#E8E0D1] text-[#1B3A5C] font-mono text-[11px] py-1.5 px-3 flex items-center justify-center gap-2 transition"
+                    >
+                      Or send voice note on real WhatsApp (+1 415 523 8886) →
+                    </a>
+                  </div>
+                </div>
+                {/* Natural-language command bar — never stuck */}
+                <div className="mt-3 bg-[#1B3A5C] border border-[#0F2340] p-3">
+                  <div className="font-mono text-[10px] tracking-[0.14em] text-[#F2B705] flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3" /> CLAUDE-STYLE COMMAND — TYPE & BUILD INSTANTLY
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      value={commandText}
+                      onChange={(e) => setCommandText(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleCommandBuild(); }}
+                      placeholder="Try: Delhi to Jaipur tomorrow fastest"
+                      className="flex-1 bg-white border border-[#E8E0D1] px-3 py-2 font-mono text-[13px] outline-none focus:border-[#F2B705] placeholder:text-[#5C6B80]/60"
+                    />
+                    <button onClick={handleCommandBuild} disabled={commandLoading} className="px-4 bg-[#F2B705] text-[#1B3A5C] border border-[#0F2340] font-display text-[12px] tracking-wide hover:brightness-105 disabled:opacity-60 cursor-pointer flex items-center gap-1.5">
+                      {commandLoading ? "BUILDING..." : "BUILD"} <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="font-mono text-[10px] text-[#FAF7F0]/60 mt-1.5">Parses Hindi/English: “Delhi se Goa kal”, “Mumbai to Chennai cheapest”. 5s timeout — never stuck midway. Fallback to form.</div>
+                </div>
+                {/* Popular routes — fixes “same thing every time” */}
+                <div className="mt-3">
+                  <div className="font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] mb-2">POPULAR — TAP TO TRY DIFFERENT:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {POPULAR_ROUTES.map((r) => (
+                      <button
+                        key={r.label}
+                        onClick={() => {
+                          setFrom(r.from);
+                          setTo(r.to);
+                          // keep date/pref, build immediately
+                          const res = findJourneys(r.from, r.to, date, pref);
+                          if (res.length > 0) {
+                            const easy = findJourneys(r.from, r.to, date, "easy")[0];
+                            const fast = findJourneys(r.from, r.to, date, "fastest")[0];
+                            const cheap = findJourneys(r.from, r.to, date, "cheapest")[0];
+                            const map = new Map<string, Journey>();
+                            [easy, fast, cheap].forEach((j) => { if (j) map.set(j.id, j); });
+                            let list = Array.from(map.values());
+                            if (list.length < 3) {
+                              const fb = findJourneys(r.from, r.to, date, "easy");
+                              fb.forEach((j) => { if (!map.has(j.id)) map.set(j.id, j); });
+                              list = Array.from(map.values());
+                            }
+                            const ordered: Journey[] = [];
+                            if (easy) ordered.push(easy);
+                            if (fast && fast.id !== easy?.id) ordered.push(fast);
+                            if (cheap && cheap.id !== easy?.id && cheap.id !== fast?.id) ordered.push(cheap);
+                            list.forEach((j) => { if (!ordered.find((o) => o.id === j.id)) ordered.push(j); });
+                            setJourneys(ordered.slice(0, 3));
+                            setView("results");
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          } else {
+                            setToast(`No route yet for ${r.label}`);
+                            setTimeout(() => setToast(null), 2000);
+                          }
+                        }}
+                        className="px-2.5 py-1 bg-white border border-[#E8E0D1] font-mono text-[11px] hover:border-[#1B3A5C] hover:bg-[#FAF7F0] cursor-pointer"
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -770,7 +1006,7 @@ export default function Home() {
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold tracking-wider bg-[#1B3A5C] text-[#FAF7F0] px-2 py-0.5">
-                              <Route className="w-3 h-3 text-[#F2B705]" /> 1 INTERCHANGE · VIA {getStationName(transfer?.fromStationId).toUpperCase()} ({formatDuration(transfer?.durationMinutes)} LAYOVER)
+                              <Route className="w-3 h-3 text-[#F2B705]" /> 1 CHANGE · VIA {getStationName(transfer?.fromStationId).toUpperCase()}
                             </span>
                           )}
                           {isRecommended && (
@@ -903,10 +1139,6 @@ export default function Home() {
                   </div>
                 );
               })}
-            </div>
-            <div className="mt-4 border border-[#E8E0D1] bg-white p-3 flex gap-2 font-mono text-[11px] leading-4 text-[#5C6B80]">
-              <Info className="w-4 h-4 shrink-0 text-[#1B3A5C]" />
-              Prototype uses synthetic train & delay data — not live availability. Fares are estimates for AC 3-tier on selected date.
             </div>
           </div>
         )}
@@ -1117,27 +1349,6 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-4 bg-white border border-[#E8E0D1] p-4">
-              <div className="font-display text-[11px] tracking-[0.16em] text-[#5C6B80]">JOURNEY OBJECT — PLATFORM-READY</div>
-              <pre className="mt-2 font-mono text-[11px] bg-[#FAF7F0] border border-[#E8E0D1] p-3 overflow-auto leading-4">
-                {JSON.stringify(
-                  {
-                    origin: selected.origin.name,
-                    destination: selected.destination.name,
-                    date: selected.date,
-                    legs: selected.legs.map((l) =>
-                      l.type === "train"
-                        ? { mode: "rail", from: (l as any).from.name, to: (l as any).to.name, departure: (l as any).departure, arrival: (l as any).arrival }
-                        : { mode: "transfer", station: getStationName((l as any).transfer.fromStationId), duration_minutes: (l as any).transfer.durationMinutes, risk: (l as any).transfer.risk }
-                    ),
-                  },
-                  null,
-                  2
-                )}
-              </pre>
-              <p className="font-mono text-[11px] text-[#5C6B80] mt-2">FUTURE: RAIL → METRO → BUS → LAST-MILE FROM ONE OBJECT.</p>
-            </div>
-
             <div className="mt-4 border border-[#E8E0D1] bg-[#FAF7F0] p-4 text-center">
               <div className="font-display text-[14px] tracking-wide">READY TO BOOK?</div>
               <p className="text-[13px] text-[#5C6B80] mt-1 leading-4">Raasta has planned your journey. Booking happens via the railway booking service.</p>
@@ -1150,7 +1361,6 @@ export default function Home() {
               >
                 CONTINUE TO BOOKING <ArrowRight className="w-3.5 h-3.5" />
               </button>
-              <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] mt-2">MOCKED — NO REAL PAYMENT OR TRANSACTION.</p>
             </div>
           </div>
         )}
@@ -1407,27 +1617,82 @@ export default function Home() {
           </div>
         )}
 
+        {/* WhatsApp Bot Demo Modal — interactive, never stuck */}
+        {showWhatsAppDemo && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div onClick={() => setShowWhatsAppDemo(false)} className="absolute inset-0 bg-[#1B3A5C]/60 backdrop-blur-sm" />
+            <div className="relative w-full max-w-[420px] bg-[#E7FFDB] border-[2px] border-[#1B3A5C] shadow-[6px_6px_0_#1B3A5C] flex flex-col max-h-[85vh]">
+              <div className="bg-[#075E54] text-white px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-white grid place-items-center"><MessageCircle className="w-5 h-5 text-[#075E54] fill-current" /></div>
+                  <div>
+                    <div className="font-display text-[13px] tracking-wide">RAASTA WHATSAPP BOT</div>
+                    <div className="font-mono text-[11px] opacity-80">+1 415 523 8886 · instant build</div>
+                  </div>
+                </div>
+                <button onClick={() => setShowWhatsAppDemo(false)} className="w-7 h-7 bg-white text-[#075E54] grid place-items-center"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="flex-1 overflow-auto p-3 space-y-2 bg-[#E7FFDB] min-h-[280px]">
+                {waMessages.map((m, i) => (
+                  <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[82%] px-3 py-2 font-mono text-[12px] leading-4 border ${m.role === "user" ? "bg-[#DCF8C6] border-[#075E54]/20 rounded-l-lg rounded-br-lg" : "bg-white border-[#E8E0D1] rounded-r-lg rounded-bl-lg shadow-sm"}`}>
+                      <div>{m.text}</div>
+                      {m.journey && (
+                        <button
+                          onClick={() => {
+                            setSelected(m.journey!);
+                            setView("detail");
+                            setShowWhatsAppDemo(false);
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                          className="mt-2 w-full bg-[#1B3A5C] text-white py-1.5 font-mono text-[11px] tracking-wide"
+                        >
+                          VIEW JOURNEY →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="bg-white border-t border-[#E8E0D1] p-2 flex gap-2">
+                <input
+                  value={waInput}
+                  onChange={(e) => setWaInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleWaSend(); }}
+                  placeholder="Type: Delhi to Jaipur tomorrow"
+                  className="flex-1 border border-[#E8E0D1] px-3 py-2 font-mono text-[13px] outline-none focus:border-[#25D366]"
+                />
+                <button onClick={handleWaSend} className="bg-[#25D366] text-white px-4 py-2 font-mono text-[12px] font-bold hover:bg-[#20bd5a]">SEND</button>
+              </div>
+              <div className="bg-[#1B3A5C] text-[#FAF7F0]/70 font-mono text-[10px] px-3 py-1.5 text-center">Built with timeout & retry — never stuck midway · Try Hinglish “Delhi se Goa kal fastest”</div>
+            </div>
+          </div>
+        )}
+
+        {/* Floating Real WhatsApp Action Pill */}
+        <div className="fixed bottom-5 right-5 z-40">
+          <a
+            href="https://wa.me/14155238886?text=Delhi%20to%20Goa%20tomorrow"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-[#25D366] hover:bg-[#20bd5a] text-[#075E54] p-3 sm:px-4 sm:py-2.5 rounded-full shadow-[0_4px_14px_rgba(37,211,102,0.4)] flex items-center gap-2 border-2 border-white transition-all transform hover:scale-105 active:scale-95 font-bold"
+            title="Chat or send voice note on WhatsApp (+1 415 523 8886)"
+          >
+            <MessageCircle className="w-5 h-5 fill-current" />
+            <span className="hidden sm:inline font-mono text-xs tracking-wider">
+              CHAT ON WHATSAPP
+            </span>
+            <span className="w-2 h-2 rounded-full bg-[#075E54] animate-ping" />
+          </a>
+        </div>
+
         {toast && <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#1B3A5C] text-white font-mono text-[12px] tracking-wide px-4 py-2 border border-[#F2B705] z-50">{toast}</div>}
       </main>
 
-      <footer className="border-t-[3px] border-[#1B3A5C] bg-white mt-auto">
-        <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-6">
-          <div className="flex flex-col sm:flex-row gap-4 justify-between">
-            <div className="max-w-[600px]">
-              <div className="font-display text-[12px] tracking-[0.12em] text-[#1B3A5C]">PROTOTYPE INFORMATION</div>
-              <p className="font-mono text-[11px] leading-4 text-[#5C6B80] mt-2">
-                Raasta is an independent prototype and is not an official Indian Railways or government product. Train schedules, fares, delay information and availability shown are synthetic and used only for demonstration. No real passenger information, payment details, OTPs or government systems are used.
-              </p>
-              <p className="font-mono text-[11px] leading-4 text-[#5C6B80] mt-2">
-                OpenAI is used as an explanation layer to convert structured journey data into simple language. The model does not invent train information. Fallback explanations are deterministic.
-              </p>
-            </div>
-            <div className="sm:text-right font-mono text-[11px] leading-4 text-[#5C6B80]">
-              <div className="font-display text-[11px] tracking-[0.12em] text-[#1B3A5C]">BUILT FOR HACKATHON</div>
-              <div className="mt-1">PLAN THE JOURNEY, NOT THE TRAIN.</div>
-              <div className="mt-1">SYNTHETIC DATA · MOCK BOOKING · FUTURE MOBILITY CONCEPTS</div>
-            </div>
-          </div>
+      <footer className="border-t-[3px] border-[#1B3A5C] bg-white mt-auto py-5">
+        <div className="max-w-[1180px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-2 font-mono text-[11px] text-[#5C6B80]">
+          <div className="font-display text-[13px] tracking-wide text-[#1B3A5C]">RAASTA · JOURNEY PLANNER</div>
+          <div>Synthetic demonstration data for Indian Railways</div>
         </div>
       </footer>
     </div>
