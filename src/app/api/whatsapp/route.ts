@@ -8,10 +8,16 @@ export const dynamic = "force-dynamic";
  * Helper to generate TwiML XML response for Twilio WhatsApp
  */
 function createTwiMLResponse(messageText: string): NextResponse {
+  const safeText = messageText
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Message>
-    <Body><![CDATA[${messageText}]]></Body>
+    <Body>${safeText}</Body>
   </Message>
 </Response>`;
 
@@ -26,12 +32,12 @@ function createTwiMLResponse(messageText: string): NextResponse {
 /**
  * Format a full journey as a rich WhatsApp message
  */
-function formatJourneyMessage(result: Awaited<ReturnType<typeof processVoiceQuery>>, userText: string, isVoice: boolean): string {
+function formatJourneyMessage(result: Awaited<ReturnType<typeof processVoiceQuery>>, isVoice: boolean): string {
   const best = result.journeys[0];
 
   let reply = `🚆 *RAASTA JOURNEY PLANNER*\n`;
   if (isVoice) {
-    reply += `🎙️ _Heard: "${result.transcription}"_\n`;
+    reply += `🎙️ _Voice note processed successfully._\n`;
   }
   reply += `━━━━━━━━━━━━━━━━━━━\n`;
   reply += `${result.responseText}\n\n`;
@@ -218,7 +224,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Format and send journey response
-    const reply = formatJourneyMessage(result, userText, isVoice);
+    const reply = formatJourneyMessage(result, isVoice);
     return createTwiMLResponse(reply);
 
   } catch (error: any) {
