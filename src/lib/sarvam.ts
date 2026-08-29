@@ -166,43 +166,53 @@ function extractStationsFromText(text: string): { from: string; fromCode: string
     return null;
   }
 
-  // Pattern: "from X to Y" or "X to Y" or "X se Y" (Hindi/Hinglish/Bengali/Tamil/Marathi)
-  const patterns = [
-    /(?:from\s+)(.+?)(?:\s+to\s+)(.+?)(?:\s+(?:kal|aaj|parso|tomorrow|today|on|next|monday|tuesday|wednesday|thursday|friday|saturday|sunday|ko|jana|jao|jayenge|pohochna|$))/i,
-    /(?:from\s+)(.+?)(?:\s+to\s+)(.+)/i,
-    /(.+?)(?:\s+se\s+)(.+?)(?:\s+(?:kal|aaj|parso|tomorrow|today|on|next|ko|jana|jao|jayenge|pohochna|$))/i,
-    /(.+?)(?:\s+se\s+)(.+)/i,
-    /(.+?)(?:\s+to\s+)(.+?)(?:\s+(?:kal|aaj|parso|tomorrow|today|on|next|ko|jana|jao|jayenge|pohochna|$))/i,
-    /(.+?)(?:\s+to\s+)(.+)/i,
-    // Hindi: "से" delimiter
-    /(.+?)(?:\s*से\s+)(.+?)(?:\s+(?:जाना|है|kal|aaj|parso|tomorrow|today|को|$))/i,
-    /(.+?)(?:\s*से\s+)(.+)/i,
-    // Tamil: "இருந்து" / "க்கு"
-    /(.+?)(?:இருந்து)(.+?)(?:க்கு|$)/i,
-    // Bengali: "থেকে"
-    /(.+?)(?:থেকে)(.+)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = lower.match(pattern);
-    if (match) {
-      const rawFrom = match[1].trim();
-      const rawTo = match[2].trim();
-
-      const resolvedFrom = resolveAlias(rawFrom);
-      const resolvedTo = resolveAlias(rawTo);
-
-      if (resolvedFrom && resolvedTo && resolvedFrom !== resolvedTo) {
-        const fromSt = getStationByName(resolvedFrom);
-        const toSt = getStationByName(resolvedTo);
-        return {
-          from: fromSt.name,
-          fromCode: fromSt.code,
-          to: toSt.name,
-          toCode: toSt.code,
-        };
-      }
+  const stopWords = new Set([
+    "kal", "aaj", "parso", "tomorrow", "today", "on", "next", "ko", "jana", "jao", "jayenge", "pohochna",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "जाना", "है", "को", "க்கு"
+  ]);
+  const cleanSegment = (segment: string): string => {
+    const words = segment.trim().split(/\s+/);
+    const kept: string[] = [];
+    for (const w of words) {
+      if (stopWords.has(w)) break;
+      kept.push(w);
     }
+    return kept.join(" ").trim();
+  };
+
+  const tryResolvePair = (rawFrom: string, rawTo: string) => {
+    const resolvedFrom = resolveAlias(cleanSegment(rawFrom));
+    const resolvedTo = resolveAlias(cleanSegment(rawTo));
+    if (resolvedFrom && resolvedTo && resolvedFrom !== resolvedTo) {
+      const fromSt = getStationByName(resolvedFrom);
+      const toSt = getStationByName(resolvedTo);
+      return { from: fromSt.name, fromCode: fromSt.code, to: toSt.name, toCode: toSt.code };
+    }
+    return null;
+  };
+
+  const parseByDelimiter = (delimiter: string) => {
+    const idx = lower.indexOf(delimiter);
+    if (idx <= 0) return null;
+    const left = lower.slice(0, idx).trim();
+    const right = lower.slice(idx + delimiter.length).trim();
+    if (!left || !right) return null;
+    return tryResolvePair(left, right);
+  };
+
+  const fromIdx = lower.indexOf("from ");
+  if (fromIdx >= 0) {
+    const fromStart = fromIdx + "from ".length;
+    const toIdx = lower.indexOf(" to ", fromStart);
+    if (toIdx > fromStart) {
+      const parsed = tryResolvePair(lower.slice(fromStart, toIdx), lower.slice(toIdx + " to ".length));
+      if (parsed) return parsed;
+    }
+  }
+
+  for (const delimiter of [" se ", " से ", "থেকে", "இருந்து", " to "]) {
+    const parsed = parseByDelimiter(delimiter);
+    if (parsed) return parsed;
   }
 
   // Fallback: scan word-by-word for known city/station names
